@@ -1468,9 +1468,6 @@ void MainWindow::updateAppTitle(const Editor *e)
     if (mQuitting)
         return;
     QString appName=tr("Red Panda C++");
-#ifdef APP_VERSION_SUFFIX
-    appName += tr(" %1 Version").arg(APP_VERSION_SUFFIX);
-#endif
     QCoreApplication *app = QApplication::instance();
     if (e && !e->inProject()) {
         QString str;
@@ -1480,22 +1477,22 @@ void MainWindow::updateAppTitle(const Editor *e)
           str = e->filename();
         if (mDebugger->executing()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Debugging"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Debugging"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Running"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Running"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Compiling"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Compiling"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Compiling"),appName));
         } else {
             this->setWindowTitle(QString("%1 - %2 %3")
-                                 .arg(str,appName,REDPANDA_CPP_VERSION));
+                                 .arg(str,appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - %2")
                                     .arg(str,appName));
         }
@@ -1512,24 +1509,24 @@ void MainWindow::updateAppTitle(const Editor *e)
         if (mDebugger->executing()) {
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
-                                tr("Debugging"),appName,REDPANDA_CPP_VERSION));
+                                tr("Debugging"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
-                                tr("Running"),appName,REDPANDA_CPP_VERSION));
+                                tr("Running"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
-                                tr("Compiling"),appName,REDPANDA_CPP_VERSION));
+                                tr("Compiling"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Compiling"),appName));
         } else {
             setWindowTitle(QString("%1 - %2 %3")
-                                 .arg(str,appName,REDPANDA_CPP_VERSION));
+                                 .arg(str,appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - %2")
                                     .arg(str,appName));
         }
@@ -1541,27 +1538,27 @@ void MainWindow::updateAppTitle(const Editor *e)
             str = mProject->name();
         if (mDebugger->executing()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Debugging"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Debugging"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Running"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Running"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
-                           .arg(str,tr("Compiling"),appName,REDPANDA_CPP_VERSION));
+                           .arg(str,tr("Compiling"),appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - [%2] - %3")
                                     .arg(str,tr("Compiling"),appName));
         } else {
             this->setWindowTitle(QString("%1 - %2 %3")
-                                 .arg(str,appName,REDPANDA_CPP_VERSION));
+                                 .arg(str,appName,REDPANDA_CPP_DISPLAY_VERSION));
             app->setApplicationName(QString("%1 - %2")
                                     .arg(str,appName));
         }
     } else {
-        setWindowTitle(QString("%1 %2").arg(appName,REDPANDA_CPP_VERSION));
+        setWindowTitle(QString("%1 %2").arg(appName,REDPANDA_CPP_DISPLAY_VERSION));
         app->setApplicationName(QString("%1").arg(appName));
     }
 }
@@ -5391,6 +5388,8 @@ void MainWindow::onEditorTabContextMenu(QTabWidget* tabWidget, const QPoint &pos
 
 void MainWindow::disableDebugActions()
 {
+    if (mDebugger)
+        mDebugger->watchModel()->setValueEditingEnabled(false);
     ui->actionInterrupt->setVisible(mDebugger && mDebugger->useDebugServer());
     ui->actionInterrupt->setEnabled(false);
     ui->actionStep_Into->setEnabled(false);
@@ -5408,6 +5407,8 @@ void MainWindow::disableDebugActions()
 
 void MainWindow::enableDebugActions()
 {
+    mDebugger->watchModel()->setValueEditingEnabled(
+                mDebugger->executing() && !mDebugger->inferiorRunning());
     ui->actionInterrupt->setVisible(mDebugger->useDebugServer());
     ui->actionInterrupt->setEnabled(mDebugger->useDebugServer() && mDebugger->inferiorRunning());
     ui->actionStep_Into->setEnabled(!mDebugger->inferiorRunning());

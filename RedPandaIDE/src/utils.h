@@ -16,6 +16,10 @@
  */
 #ifndef UTILS_H
 #define UTILS_H
+
+#ifndef REDPANDA_CPP_DISPLAY_VERSION
+#define REDPANDA_CPP_DISPLAY_VERSION REDPANDA_CPP_VERSION
+#endif
 #include <type_traits>
 #include <utility>
 #include <functional>

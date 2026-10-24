@@ -37,6 +37,7 @@ using PGDBMICommand = std::shared_ptr<GDBMICommand>;
 
 class GDBMIDebuggerClient: public DebuggerClient {
     Q_OBJECT
+    friend class DebugWatchTest;
 public:
     explicit GDBMIDebuggerClient(Debugger* debugger, DebuggerType clientType, QObject *parent = nullptr);
     GDBMIDebuggerClient(const GDBMIDebuggerClient&) = delete;
@@ -97,6 +98,7 @@ protected:
     void run() override;
     void runNextCmd();
 private:
+    PGDBMICommand takeNextCommand();
     QStringList tokenize(const QString& s) const;
     //bool outputTerminated(const QByteArray& text) const;
     void handleBreakpoint(const GDBMIResultParser::ParseObject& breakpoint);
@@ -135,6 +137,9 @@ private:
     QString mCurrentFile;
 
     bool mAsyncUpdated;
+    bool mBreakpointInterruptPending = false;
+    bool mResumeAfterBreakpointEdit = false;
+    bool mBreakpointEditCancelled = false;
 
     static const QRegularExpression REGdbSourceLine;
 

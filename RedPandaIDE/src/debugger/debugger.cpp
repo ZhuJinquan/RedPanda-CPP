@@ -428,7 +428,7 @@ void Debugger::addBreakpoint(int line, const QString &filename, bool forProject)
     bp->breakpointType = BreakpointType::Breakpoint;
     bp->timestamp = QDateTime::currentMSecsSinceEpoch();
     mBreakpointModel->addBreakpoint(bp,forProject);
-    if (!mClient) {
+    if (mClient) {
         if (forProject && mBreakpointModel->isForProject()) {
             sendBreakpointCommand(bp);
         } else if (filename == mCurrentSourceFile) {
@@ -439,21 +439,21 @@ void Debugger::addBreakpoint(int line, const QString &filename, bool forProject)
 
 void Debugger::deleteBreakpoints(const QString &filename, bool forProject)
 {
+    QMutexLocker locker{&mClientMutex};
     const QList<PBreakpoint>& list=mBreakpointModel->breakpoints(forProject);
     for (int i=list.size()-1;i>=0;i--) {
         PBreakpoint bp = list[i];
         if (bp->filename == filename) {
-            mBreakpointModel->removeBreakpoint(i,forProject);
+            removeBreakpoint(i,forProject);
         }
     }
 }
 
 void Debugger::deleteBreakpoints(bool forProject)
 {
-    mBreakpointModel->clear(forProject);
-//    for (int i=mBreakpointModel->breakpoints().size()-1;i>=0;i--) {
-//        removeBreakpoint(i);
-    //    }
+    QMutexLocker locker{&mClientMutex};
+    for (int i=mBreakpointModel->breakpoints(forProject).size()-1;i>=0;--i)
+        removeBreakpoint(i,forProject);
 }
 
 void Debugger::deleteInvalidProjectBreakpoints(const QSet<QString> unitFiles)
@@ -1020,8 +1020,9 @@ void Debugger::setMemoryData(qulonglong address, unsigned char data)
 void Debugger::setWatchVarValue(const QString &name, const QString &value)
 {
     QMutexLocker locker{&mClientMutex};
-    if (mClient)
-        mClient->writeWatchVar(name, value);
+    if (!mClient || mClient->inferiorRunning() || name.isEmpty())
+        return;
+    mClient->writeWatchVar(name, value);
     refreshAll();
 }
 

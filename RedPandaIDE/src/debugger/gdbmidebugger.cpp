@@ -42,6 +42,12 @@ void GDBMIDebuggerClient::postCommand(const QString &command, const QString &par
                                DebugCommandSource source)
 {
     QMutexLocker locker(&mCmdQueueMutex);
+    // Explicit execution control wins over an internal breakpoint-edit pause.
+    if ((mBreakpointInterruptPending || mResumeAfterBreakpointEdit)
+            && (command.startsWith("-exec-") || source == DebugCommandSource::Console)) {
+        mBreakpointEditCancelled = true;
+        mResumeAfterBreakpointEdit = false;
+    }
     PGDBMICommand pCmd;
     if (source == DebugCommandSource::Console) {
         if (command.trimmed().isEmpty()) {
@@ -58,7 +64,10 @@ void GDBMIDebuggerClient::postCommand(const QString &command, const QString &par
     pCmd->command = command;
     pCmd->params = params;
     pCmd->source = source;
-    mCmdQueue.enqueue(pCmd);
+    if (command == "-exec-interrupt")
+        mCmdQueue.prepend(pCmd);
+    else
+        mCmdQueue.enqueue(pCmd);
 
 //    if (!mCmdRunning)
     //        runNextCmd();
@@ -175,16 +184,16 @@ void GDBMIDebuggerClient::runNextCmd()
         if (commandSource!=DebugCommandSource::HeartBeat)
             emit cmdFinished();
     }
-    if (mCmdQueue.isEmpty()) {
-        if (debugger()->useDebugServer() && mInferiorRunning && !mAsyncUpdated) {
+    PGDBMICommand pCmd = takeNextCommand();
+    if (!pCmd) {
+        if (mCmdQueue.isEmpty() && debugger()->useDebugServer()
+                && mInferiorRunning && !mAsyncUpdated) {
             mAsyncUpdated = true;
             //We must force refresh the running state response from the lldb-server....
             QTimer::singleShot(500,this,&GDBMIDebuggerClient::asyncUpdate);
         }
         return;
     }
-
-    PGDBMICommand pCmd = mCmdQueue.dequeue();
     mCmdRunning = true;
     mCurrentCmd = pCmd;
     if (pCmd->source!=DebugCommandSource::HeartBeat)
@@ -231,6 +240,39 @@ void GDBMIDebuggerClient::runNextCmd()
             emit changeDebugConsoleLastLine(pCmd->command + ' ' + params);
         }
     }
+}
+
+PGDBMICommand GDBMIDebuggerClient::takeNextCommand()
+{
+    if (mCmdQueue.isEmpty()) {
+        if (mResumeAfterBreakpointEdit && !mInferiorRunning) {
+            mResumeAfterBreakpointEdit = false;
+            auto resume = std::make_shared<GDBMICommand>();
+            resume->command = "-exec-continue";
+            resume->source = DebugCommandSource::Other;
+            return resume;
+        }
+        return PGDBMICommand();
+    }
+    const QString &command = mCmdQueue.head()->command;
+    const bool changesBreakpoint = command == "-break-insert"
+            || command == "-break-delete" || command == "-break-condition";
+    if (mInferiorRunning && debugger()->useDebugServer()
+            && clientType() == DebuggerType::GDB && changesBreakpoint) {
+        // GDB rejects breakpoint mutations while this remote target is running.
+        // Keep the operation queued until the asynchronous stop event arrives.
+        if (mBreakpointInterruptPending)
+            return PGDBMICommand();
+        mBreakpointInterruptPending = true;
+        mBreakpointEditCancelled = false;
+        auto interrupt = std::make_shared<GDBMICommand>();
+        interrupt->command = "-exec-interrupt";
+        interrupt->source = DebugCommandSource::Other;
+        return interrupt;
+    }
+    if (!mInferiorRunning)
+        mBreakpointInterruptPending = false;
+    return mCmdQueue.dequeue();
 }
 
 QStringList GDBMIDebuggerClient::tokenize(const QString &s) const
@@ -743,7 +785,10 @@ void GDBMIDebuggerClient::processExecAsyncRecord(const QByteArray &line)
         return;
     }
     if (result == "stopped") {
+        const bool breakpointStop = mBreakpointInterruptPending;
+        mBreakpointInterruptPending = false;
         mInferiorRunning = false;
+        mResumeAfterBreakpointEdit = false;
         QByteArray reason = multiValues["reason"].value();
         if (reason == "exited") {
             //inferior exited, gdb should terminate too
@@ -764,9 +809,16 @@ void GDBMIDebuggerClient::processExecAsyncRecord(const QByteArray &line)
         mUpdateCPUInfo = true;
         handleFrame(multiValues["frame"]);
         if (reason == "signal-received") {
-            mSignalReceived = true;
             mSignalName = multiValues["signal-name"].value();
             mSignalMeaning = multiValues["signal-meaning"].value();
+            // Hide only our own interrupt, never a real breakpoint or fault.
+            const bool internalStop = breakpointStop && mSignalName == "SIGINT";
+            mSignalReceived = !internalStop;
+            if (internalStop && !mBreakpointEditCancelled) {
+                mResumeAfterBreakpointEdit = true;
+                mUpdateCPUInfo = false;
+                return;
+            }
         } else if (reason == "watchpoint-trigger") {
             QString var,oldVal,newVal;
             GDBMIResultParser::ParseValue wpt=multiValues["wpt"];
@@ -802,6 +854,13 @@ void GDBMIDebuggerClient::processError(const QByteArray &errorLine)
 {
     QString s = QString::fromLocal8Bit(errorLine);
     mConsoleOutput.append(s);
+    if (mResumeAfterBreakpointEdit) {
+        // A failed mutation must remain visible and must not restart the target.
+        mResumeAfterBreakpointEdit = false;
+        mBreakpointEditCancelled = true;
+        runInferiorStoppedHook();
+        emit inferiorStopped(mCurrentFile, mCurrentLine-1);
+    }
     int idx=s.indexOf(",msg=\"No symbol table is loaded");
     if (idx>0) {
         emit errorNoSymbolTable();
@@ -1155,7 +1214,12 @@ void GDBMIDebuggerClient::removeWatch(PWatchVar watchVar)
 
 void GDBMIDebuggerClient::writeWatchVar(const QString &varName, const QString &value)
 {
-    postCommand("-var-assign",QString("%1 %2").arg(varName, value));
+    QString escaped = value;
+    escaped.replace('\\', "\\\\");
+    escaped.replace('"', "\\\"");
+    escaped.replace('\r', "\\r");
+    escaped.replace('\n', "\\n");
+    postCommand("-var-assign", QString("%1 \"%2\"").arg(varName, escaped));
 }
 
 void GDBMIDebuggerClient::addWatchpoint(const QString &watchExp)

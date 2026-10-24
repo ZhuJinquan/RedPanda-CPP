@@ -28,7 +28,7 @@ AboutDialog::AboutDialog(QWidget *parent) :
 {
     setWindowFlag(Qt::WindowContextHelpButtonHint,false);
     ui->setupUi(this);
-    ui->lblTitle->setText(ui->lblTitle->text() + tr("Version: ") + REDPANDA_CPP_VERSION);
+    ui->lblTitle->setText(ui->lblTitle->text() + tr("Version: ") + REDPANDA_CPP_DISPLAY_VERSION);
 
     QString buildArch = appArch();
 #if defined(__x86_64__) && defined(ENABLE_GLIBC_HWCAPS)

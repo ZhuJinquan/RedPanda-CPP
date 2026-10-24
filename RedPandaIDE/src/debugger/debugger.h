@@ -63,6 +63,7 @@ using PDebugReader = std::shared_ptr<DebuggerClient>;
 class Debugger : public QObject
 {
     Q_OBJECT
+    friend class DebugWatchTest;
 public:
     explicit Debugger(QObject *parent = nullptr);
     ~Debugger();

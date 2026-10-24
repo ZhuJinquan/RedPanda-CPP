@@ -432,6 +432,10 @@ QVariant WatchModel::data(const QModelIndex &index, int role) const
     }
     WatchVar* item = static_cast<WatchVar*>(index.internalPointer());
     switch (role) {
+    case Qt::EditRole:
+        if (index.column() == 2)
+            return item->value;
+        break;
     case Qt::DisplayRole:
         switch(index.column()) {
         case 0:
@@ -609,9 +613,11 @@ PWatchVar WatchModel::findWatchVar(const QString &expr)
 
 void WatchModel::resetAllVarInfos()
 {
+    mValueEditingEnabled = false;
     beginResetModel();
     foreach (PWatchVar var, watchVars(mIsForProject)) {
         var->name.clear();
+        var->inScope = false;
         var->value = tr("Not Valid");
         var->numChild = 0;
         var->hasMore = false;
@@ -632,6 +638,7 @@ void WatchModel::updateVarInfo(const QString &expression, const QString &name, i
     var->numChild = numChild;
     var->hasMore = hasMore;
     var->type = type;
+    var->inScope = !name.isEmpty() && !type.isEmpty();
     mVarIndex.insert(name,var);
     QModelIndex idx = index(var);
     if (!idx.isValid())
@@ -667,6 +674,7 @@ void WatchModel::addVarChild(const QString &parentName, const QString &name,
     child->numChild = numChild;
     child->value = value;
     child->type = type;
+    child->inScope = !name.isEmpty() && !type.isEmpty();
     child->hasMore = hasMore;
     child->parent = var;
     child->timestamp = QDateTime::currentMSecsSinceEpoch();
@@ -680,7 +688,8 @@ void WatchModel::updateVarValue(const QString &name, const QString &val, const Q
     PWatchVar var = mVarIndex.value(name,PWatchVar());
     if (!var)
         return;
-    if (inScope == "true") {
+    var->inScope = (inScope == "true");
+    if (var->inScope) {
         var->value = val;
     } else{
         var->value = tr("Not Valid");
@@ -733,9 +742,11 @@ const QList<PWatchVar> &WatchModel::watchVars(bool forProject) const
 
 void WatchModel::clearAllVarInfos()
 {
+    mValueEditingEnabled = false;
     beginResetModel();
     foreach (PWatchVar var, watchVars(mIsForProject)) {
         var->name.clear();
+        var->inScope = false;
         var->value = tr("Execute to evaluate");
         var->numChild = 0;
         var->hasMore = false;
@@ -852,17 +863,20 @@ QList<PWatchVar> WatchModel::loadJson(const QJsonArray &jsonArray, qint64 criter
     return result;
 }
 
+void WatchModel::setValueEditingEnabled(bool enabled)
+{
+    mValueEditingEnabled = enabled;
+}
+
 bool WatchModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
-    if (!index.isValid()) {
+    if (role != Qt::EditRole || !(flags(index) & Qt::ItemIsEditable)
+            || value.toString().trimmed().isEmpty())
         return false;
-    }
-    if (index.column()==2 && role == Qt::EditRole) {
-        WatchVar* item = static_cast<WatchVar*>(index.internalPointer());
-        emit setWatchVarValue(item->name,value.toString());
-    }
-    return false;
-
+    WatchVar* item = static_cast<WatchVar*>(index.internalPointer());
+    // Keep displaying the debugger's value until the assignment is read back.
+    emit setWatchVarValue(item->name, value.toString());
+    return true;
 }
 
 Qt::ItemFlags WatchModel::flags(const QModelIndex &index) const
@@ -871,9 +885,10 @@ Qt::ItemFlags WatchModel::flags(const QModelIndex &index) const
     if (!index.isValid()) {
         return Qt::ItemIsEnabled;
     }
-    if (index.column() == 2) {
+    if (index.column() == 2 && mValueEditingEnabled) {
         WatchVar* item = static_cast<WatchVar*>(index.internalPointer());
-        if (item->numChild==0 && !item->type.isEmpty())
+        if (item->inScope && item->numChild==0 && !item->type.isEmpty()
+                && !item->name.isEmpty())
             flags |= Qt::ItemIsEditable;
     }
     return flags;

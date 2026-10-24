@@ -187,13 +187,11 @@ target_compile_definitions(RedPandaIDE PRIVATE
     APP_NAME=\"${APP_NAME}\"
     LIBEXECDIR=\"${CMAKE_INSTALL_LIBEXECDIR}\"
     REDPANDA_CPP_VERSION=\"${REDPANDA_VERSION}\"
+    REDPANDA_CPP_DISPLAY_VERSION=\"${REDPANDA_DISPLAY_VERSION}\"
     ARCH_X86_64=1
     ARCH_X86=1)
 
-if(APP_VERSION_PRE_RELEASE)
-    target_compile_definitions(RedPandaIDE PRIVATE
-        APP_VERSION_SUFFIX=\"${APP_VERSION_PRE_RELEASE}\")
-endif()
+
 
 target_include_directories(RedPandaIDE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -570,4 +568,22 @@ elseif(MACOS)
             MACOSX_PACKAGE_LOCATION "Resources")
     target_sources(RedPandaIDE PRIVATE
         ${app_icon})
+endif()
+
+# Reuse the same sources and generated resources to exercise the production
+# debugger and watch model, without the IDE entry point.
+option(DEBUGWATCH_TESTS "Build focused debugger/watch regression tests" OFF)
+if(DEBUGWATCH_TESTS)
+    get_target_property(debugwatch_sources RedPandaIDE SOURCES)
+    list(FILTER debugwatch_sources EXCLUDE REGEX "(^|/)main\\.cpp$|windows_icon\\.rc$")
+    add_executable(test-debugwatch test/debugwatchtest.cpp ${debugwatch_sources})
+    target_include_directories(test-debugwatch PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(test-debugwatch PRIVATE
+        $<TARGET_PROPERTY:RedPandaIDE,COMPILE_DEFINITIONS>)
+    target_link_libraries(test-debugwatch PRIVATE
+        $<TARGET_PROPERTY:RedPandaIDE,LINK_LIBRARIES> Qt::Test)
+    add_test(NAME test-debugwatch COMMAND test-debugwatch)
+    set_tests_properties(test-debugwatch PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_dependencies(all-test-targets test-debugwatch)
 endif()

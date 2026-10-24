@@ -30,3 +30,9 @@ dist
 
 # macOS Things
 .DS_Store
+
+/.tools/
+
+/artifacts/
+
+/*.log

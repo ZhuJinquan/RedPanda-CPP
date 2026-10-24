@@ -218,6 +218,9 @@ void DebuggerSettings::doSave()
     saveValue("autosave",mAutosave);
     saveValue("open_cpu_info_when_signaled",mOpenCPUInfoWhenSignaled);
     saveValue("use_gdb_server", mUseGDBServer);
+#ifdef Q_OS_WIN
+    saveValue("gdb_server_default_version", 1);
+#endif
     saveValue("gdb_server_port",mGDBServerPort);
     saveValue("memory_view_rows",mMemoryViewRows);
     saveValue("memory_view_columns",mMemoryViewColumns);
@@ -240,7 +243,19 @@ void DebuggerSettings::doLoad()
     mAutosave = boolValue("autosave",true);
     mOpenCPUInfoWhenSignaled = boolValue("open_cpu_info_when_signaled",true);
 #ifdef Q_OS_WIN
-    mUseGDBServer = boolValue("use_gdb_server", false);
+    // Windows native GDB cannot process breakpoint edits while the target runs.
+    // Upgrade old profiles once, including an explicit legacy false value.
+    // The marker preserves a user's later decision to disable server mode.
+    if (intValue("gdb_server_default_version", 0) < 1) {
+        mUseGDBServer = true;
+        if (mPersistor) {
+            saveValue("use_gdb_server", true);
+            saveValue("gdb_server_default_version", 1);
+            mPersistor->sync();
+        }
+    } else {
+        mUseGDBServer = boolValue("use_gdb_server", true);
+    }
 #else
     mUseGDBServer = true;
 #endif

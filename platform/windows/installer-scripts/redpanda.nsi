@@ -9,17 +9,25 @@ Unicode True
 
 !define APP_NAME_EN "Red Panda C++"
 !define APP_NAME_ZH_CN "小熊猫C++"
-!define DISPLAY_NAME "$(StrAppName) ${APP_VERSION} (${ARCH})"
+!ifndef APP_DISPLAY_VERSION
+  !define APP_DISPLAY_VERSION "${APP_VERSION}"
+!endif
+!define DISPLAY_NAME "$(StrAppName) ${APP_DISPLAY_VERSION} (${ARCH})"
 
 !define INSTALL_NAME "RedPanda-Cpp"
 !define REGISTRY_PROGRAM_ID "RedPanda-C++"
-!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${REGISTRY_PROGRAM_ID}"
+!ifndef UNINSTKEY
+  !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${REGISTRY_PROGRAM_ID}"
+!endif
 
 !define MULTIUSER_EXECUTIONLEVEL Highest
 !define MULTIUSER_INSTALLMODE_COMMANDLINE
 !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY  "${UNINSTKEY}"
 !define MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_VALUENAME "CurrentUser"
 !define MULTIUSER_INSTALLMODE_INSTDIR "${INSTALL_NAME}"
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_KEY "${UNINSTKEY}"
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_VALUENAME "InstallLocation"
+!define MULTIUSER_INSTALLMODE_FUNCTION FindPreviousInstallLocation
 !define MULTIUSER_MUI
 !if "${ARCH}" != "x86"
   !define MULTIUSER_USE_PROGRAMFILES64
@@ -31,10 +39,16 @@ Unicode True
 !include "MultiUser.nsh"
 !include "WinVer.nsh"
 !include "WordFunc.nsh"
+!include "FileFunc.nsh"
 !include "x64.nsh"
 
 !include "lang.nsh"
 !include "utils.nsh"
+
+Var /GLOBAL uninstallString
+Var /GLOBAL installLocation
+Var /GLOBAL oldVersion
+Var /GLOBAL versionCompareResult
 
 !define MUI_CUSTOMFUNCTION_GUIINIT myGuiInit
 
@@ -57,7 +71,7 @@ CRCCheck on
 SetCompressor /SOLID /FINAL lzma
 SetCompressorDictSize 64
 SetDatablockOptimize on
-SetOverwrite try
+SetOverwrite on
 XPStyle on
 
 ManifestDPIAware true
@@ -96,6 +110,8 @@ InstType "$(StrInstTypeSafe)"    ;3
 # Silently uninstall previous version
 
 Section "" SecUninstallPrevious
+  StrCpy $installLocation $INSTDIR
+  Call CheckIdeClosed
   !insertmacro CheckPreviousInstaller
 SectionEnd
 
@@ -126,6 +142,9 @@ Section "$(SectionMainName)" SectionMain
   File "NEWS.md"
   File "README.md"
   File "qt.conf"
+  !ifdef HAVE_SHARED_RUNTIME
+    !include "runtime-files.nsh"
+  !endif
   !ifdef HAVE_OPENCONSOLE
     File "OpenConsole.exe"
   !endif
@@ -356,6 +375,11 @@ SectionEnd
 # Functions, utilities
 
 Function .onInit
+  !if "${ARCH}" == "x86"
+    SetRegView 32
+  !else
+    SetRegView 64
+  !endif
   !insertmacro MULTIUSER_INIT
   !insertmacro MUI_LANGDLL_DISPLAY
   !insertmacro DetectOsArch
@@ -411,21 +435,79 @@ Function un.onInit
   !endif
 FunctionEnd
 
-Var /GLOBAL uninstallString
-Var /GLOBAL installLocation
-Var /GLOBAL oldVersion
-Var /GLOBAL versionCompareResult
+Function FindPreviousInstallLocation
+  ; Both registry views have been used by previous Windows installers.
+  SetRegView 32
+  Call ReadPreviousInstallLocation
+  SetRegView 64
+  Call ReadPreviousInstallLocation
+  !if "${ARCH}" == "x86"
+    SetRegView 32
+  !endif
+FunctionEnd
+
+Function ReadPreviousInstallLocation
+  ReadRegStr $installLocation ShCtx "${UNINSTKEY}" "InstallLocation"
+  ${If} $installLocation == ""
+    ReadRegStr $installLocation ShCtx "${UNINSTKEY}" "UninstallString"
+    ${If} $installLocation != ""
+      StrCpy $0 $installLocation 1
+      ${If} $0 == '$\"'
+        StrCpy $installLocation $installLocation -1 1
+      ${EndIf}
+      ${GetParent} "$installLocation" $installLocation
+    ${EndIf}
+  ${EndIf}
+  ${If} $installLocation != ""
+    IfFileExists "$installLocation\RedPandaIDE.exe" 0 +2
+      StrCpy $INSTDIR $installLocation
+  ${EndIf}
+FunctionEnd
 
 Function UninstallExisting
   ReadRegStr $uninstallString ShCtx  "${UNINSTKEY}"  "UninstallString"
   ${If} $uninstallString != ""
     ReadRegStr $installLocation ShCtx  "${UNINSTKEY}"  "InstallLocation"
+    ; Legacy installers only stored the uninstaller path.
+    ${If} $installLocation == ""
+      StrCpy $installLocation $uninstallString
+      StrCpy $0 $installLocation 1
+      ${If} $0 == '$\"'
+        StrCpy $installLocation $installLocation -1 1
+      ${EndIf}
+      ${GetParent} "$installLocation" $installLocation
+    ${EndIf}
+    Call CheckIdeClosed
     DetailPrint "$(MessageUninstallingExisting)"
-    ; uninstallString already quoted; NSIS requires installLocation unquoted
-    ExecWait '$uninstallString /S _?=$installLocation'
-    Delete "$uninstallString"
+    ; Quote the executable, but NSIS requires _?=installLocation unquoted.
+    ClearErrors
+    ExecWait '"$installLocation\uninstall.exe" /S /$MultiUser.InstallMode _?=$installLocation' $0
+    ${If} ${Errors}
+    ${OrIf} $0 != 0
+      MessageBox MB_OK|MB_ICONSTOP "$(ErrorUninstallFailed)" /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    Delete "$installLocation\uninstall.exe"
     RMDir "$installLocation"
   ${EndIf}
+FunctionEnd
+
+; Never terminate the IDE: let the user save work and close it, then retry.
+; Opening the executable for writing fails while its image is mapped.
+Function CheckIdeClosed
+  Push $0
+check_ide_retry:
+  IfFileExists "$installLocation\RedPandaIDE.exe" 0 check_ide_done
+  System::Call 'kernel32::CreateFileW(w "$installLocation\RedPandaIDE.exe", i 0x40000000, i 7, p 0, i 3, i 0, p 0) p.r0'
+  ${If} $0 == -1
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(MessageCloseIde)" /SD IDCANCEL IDRETRY check_ide_retry
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  System::Call 'kernel32::CloseHandle(p r0)'
+check_ide_done:
+  Pop $0
 FunctionEnd
 
 Function UninstallV2
@@ -492,6 +574,9 @@ Section "Uninstall"
   Delete "$INSTDIR\qt.conf"
   Delete "$INSTDIR\OpenConsole.exe"
   Delete "$INSTDIR\compiler_hint.lua"
+  !ifdef HAVE_SHARED_RUNTIME
+    !include "runtime-uninstall.nsh"
+  !endif
   Delete "$INSTDIR\VC_redist.x86.exe"
   Delete "$INSTDIR\VC_redist.x64.exe"
 

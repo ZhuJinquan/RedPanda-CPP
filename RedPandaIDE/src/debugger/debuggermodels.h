@@ -41,6 +41,7 @@ struct WatchVar {
     bool hasMore;
     QString value;
     QString type;
+    bool inScope = false;
     int numChild;
     QList<PWatchVar> children;
     std::weak_ptr<WatchVar> parent; //use raw point to prevent circular-reference
@@ -186,6 +187,7 @@ public:
     void beginUpdate();
     void endUpdate();
     void notifyUpdated(PWatchVar var);
+    void setValueEditingEnabled(bool enabled);
 signals:
     void setWatchVarValue(const QString& name, const QString& value);
 public  slots:
@@ -225,6 +227,7 @@ private:
 
     int mUpdateCount;
     bool mIsForProject;
+    bool mValueEditingEnabled = false;
 
     // QAbstractItemModel interface
 public:
