@@ -1,5 +1,6 @@
 #include <QtTest>
 #include <QGuiApplication>
+#include <QDir>
 #include "test_charpos.h"
 #include "test_cppsyntaxer.h"
 #include "test_document.h"
@@ -13,41 +14,59 @@ int main(int argc, char *argv[]) {
     QTest::setMainSourcePath(__FILE__, QT_TESTCASE_BUILDDIR); // Optional: for source path resolution
 
     QApplication app(argc,argv);
+    QStringList arguments = app.arguments();
+    QString reportDirectory;
+    const int reportIndex = arguments.indexOf("--report-dir");
+    if (reportIndex >= 0 && reportIndex + 1 < arguments.size()) {
+        reportDirectory = arguments[reportIndex + 1];
+        QDir().mkpath(reportDirectory);
+        arguments.removeAt(reportIndex + 1);
+        arguments.removeAt(reportIndex);
+    }
+    auto run = [&](QObject &test) {
+        if (reportDirectory.isEmpty())
+            return QTest::qExec(&test, argc, argv);
+        QString name = QString::fromLatin1(test.metaObject()->className());
+        name.replace(":", "_");
+        QStringList testArguments = arguments;
+        testArguments << "-o" << (QDir(reportDirectory).filePath(name + ".txt") + ",txt");
+        return QTest::qExec(&test, testArguments);
+    };
     //CharPos Test
     {
         QSynedit::TestCharPos tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
     {
         QSynedit::TestDocumentHelpers tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
 
     //QDocument Test
     {
         QSynedit::TestDocument tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
 
     //Cpp Syntaxer Test
     {
         TestCppSyntaxer tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
 
     //SynEdit Test
     {
         QSynedit::TestQSyneditCpp tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
 
     {
         QSynedit::TestQSyneditEmoji tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
     {
         QSynedit::TestQSyneditCppSearchReplace tc;
-        status |= QTest::qExec(&tc, argc, argv);
+        status |= run(tc);
     }
 
     return status;

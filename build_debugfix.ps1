@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$QtDir = (Join-Path $PSScriptRoot '.tools/Qt/5.15.2/msvc2019_64'),
-    [string]$PackageName = 'RedPanda-3.5-beta2-r3',
+    [string]$PackageName = 'RedPanda-3.5-beta2-r4',
     [switch]$RunTests,
     [switch]$Installer,
     [switch]$PackageOnly,
@@ -49,11 +49,18 @@ if (-not $PackageOnly) {
     cmake --build $buildDir --target RedPandaIDE ConsolePauser --parallel 8
     Check-Exit 'Build'
     if ($RunTests) {
-        cmake --build $buildDir --target test-debugwatch --parallel 8
-        Check-Exit 'Build debugger tests'
+        cmake --build $buildDir --target all-test-targets --parallel 8
+        Check-Exit 'Build regression tests'
         $env:QT_QPA_PLATFORM = 'offscreen'
+        $env:QT_QPA_FONTDIR = "$env:WINDIR/Fonts"
         & "$buildDir/RedPandaIDE/test-debugwatch.exe" -o "$PSScriptRoot/artifacts/debugwatch-beta35-tests.txt,txt"
         Check-Exit 'Debugger tests'
+        # Shared editor geometry tests need the product's native font backend.
+        # The focused suite above already ran once and saved its detailed report.
+        $env:QT_QPA_PLATFORM = 'windows'
+        Remove-Item Env:QT_QPA_FONTDIR
+        ctest --test-dir $buildDir -E '^test-debugwatch$' --output-on-failure --timeout 180
+        Check-Exit 'Editor and parser regressions'
         Remove-Item Env:QT_QPA_PLATFORM
     }
     cmake --install $buildDir

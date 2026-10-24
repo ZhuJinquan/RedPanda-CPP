@@ -8838,7 +8838,7 @@ void MainWindow::on_actionC_C_Reference_triggered()
         return;
     }
     if (pSettings->environment().language()=="zh_CN") {
-        QDesktopServices::openUrl(QUrl("https://zh.cppreference.com/w/cpp"));
+        QDesktopServices::openUrl(QUrl("https://cppreference.cn/w/cpp"));
     } else {
         QDesktopServices::openUrl(QUrl("https://en.cppreference.com/w/cpp"));
     }
@@ -9146,7 +9146,7 @@ void MainWindow::on_actionC_Reference_triggered()
         return;
     }
     if (pSettings->environment().language()=="zh_CN") {
-        QDesktopServices::openUrl(QUrl("https://zh.cppreference.com/w/c"));
+        QDesktopServices::openUrl(QUrl("https://cppreference.cn/w/c"));
     } else {
         QDesktopServices::openUrl(QUrl("https://en.cppreference.com/w/c"));
     }

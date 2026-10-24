@@ -2,6 +2,79 @@
 #include "debugger/debugger.h"
 #include "debugger/gdbmidebugger.h"
 #include "settings/debuggersettings.h"
+#include "compiler/compiler.h"
+#include "mainwindow.h"
+#include "editormanager.h"
+#include "editor.h"
+#include "systemconsts.h"
+#include "autolinkmanager.h"
+#include "utils/os.h"
+#include <qt_utils/charsetinfo.h>
+#include <qsynedit/syntaxer/cpp.h>
+#include <qsynedit/formatter/cppformatter.h>
+#include <QClipboard>
+#include <QDesktopServices>
+
+class UiRegressionContext {
+public:
+    QTemporaryDir directory;
+    SystemConsts systemConsts;
+    CharsetInfoManager charset{"en_US"};
+    Settings settings{directory.filePath("settings.ini")};
+    AutolinkManager autolinks;
+    ExternalResource resources;
+    std::unique_ptr<MainWindow> window;
+
+    UiRegressionContext() {
+        pSystemConsts = &systemConsts;
+        pCharsetInfoManager = &charset;
+        pSettings = &settings;
+        pAutolinkManager = &autolinks;
+        initParser();
+        auto compiler = std::make_shared<CompilerSet>();
+        compiler->setName("Regression compiler");
+        compiler->setCompilerType(CompilerType::GCC);
+        settings.compilerSets().addSet(compiler);
+        settings.compilerSets().setDefaultIndex(0);
+        settings.compilerSets().saveSets();
+        settings.sync();
+        settings.load();
+        settings.codeCompletion().setEnabled(false);
+        window = std::make_unique<MainWindow>();
+        pMainWindow = window.get();
+    }
+    ~UiRegressionContext() {
+        window.reset();
+        pMainWindow = nullptr;
+        pAutolinkManager = nullptr;
+        pSettings = nullptr;
+        pCharsetInfoManager = nullptr;
+        pSystemConsts = nullptr;
+    }
+};
+
+class CompilerArgumentProbe : public Compiler {
+public:
+    PCompilerSet set = std::make_shared<CompilerSet>();
+    CompilerArgumentProbe() : Compiler("control.c", false) {
+        set->setCompilerType(CompilerType::GCC);
+    }
+    using Compiler::getCCompileArguments;
+    using Compiler::getCppCompileArguments;
+    using Compiler::getLibraryArguments;
+protected:
+    PCompilerSet compilerSet() override { return set; }
+    bool prepareForCompile() override { return false; }
+    bool prepareForRebuild() override { return false; }
+};
+
+class ReferenceUrlCapture : public QObject {
+    Q_OBJECT
+public:
+    QUrl lastUrl;
+public slots:
+    void capture(const QUrl& url) { lastUrl = url; }
+};
 
 class TestClient : public GDBMIDebuggerClient {
 public:
@@ -20,6 +93,103 @@ class DebugWatchTest : public QObject {
         return client;
     }
 private slots:
+    void pauseActivatesSourceEditor() {
+        UiRegressionContext ui;
+        const QString source = ui.directory.filePath("control.c");
+        const QString other = ui.directory.filePath("other.c");
+        for (const QString& filename : {source, other}) {
+            QFile file(filename);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("int a;\nint b;\nint c;\n");
+        }
+        Editor *sourceEditor = ui.window->openFile(source);
+        QVERIFY(sourceEditor);
+        Editor *otherEditor = ui.window->openFile(other);
+        QVERIFY(otherEditor);
+        QCOMPARE(ui.window->editorManager()->getEditor(), otherEditor);
+        Debugger debugger;
+        auto *client = attach(debugger);
+        connect(client, &DebuggerClient::inferiorStopped,
+                ui.window.get(), &MainWindow::setActiveBreakpoint);
+        client->setRunning(true);
+        const QByteArray record = "*stopped,reason=\"signal-received\",signal-name=\"SIGINT\",frame={fullname=\""
+                + source.toUtf8() + "\",line=\"3\"}";
+        client->processExecAsyncRecord(record);
+        QCOMPARE(ui.window->editorManager()->getEditor(), sourceEditor);
+        QCOMPARE(sourceEditor->caretXY().line, 2);
+        QCOMPARE(sourceEditor->caretXY().ch, 0);
+        QVERIFY(!client->inferiorRunning());
+        QVERIFY(!client->mResumeAfterBreakpointEdit);
+    }
+    void singleLinePastePreservesWhitespace_data() {
+        QTest::addColumn<QString>("before");
+        QTest::addColumn<int>("position");
+        QTest::addColumn<QString>("clipboard");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("issue-766") << "    b;" << 4 << "a += " << "    a += b;";
+        QTest::newRow("spaces-only") << "b;" << 0 << "   " << "   b;";
+        QTest::newRow("tabs-and-spaces") << "\tb;" << 1 << " \t " << "\t \t b;";
+        QTest::newRow("leading-and-trailing") << "b;" << 0 << " a += " << " a += b;";
+        QTest::newRow("inside-expression") << "a+b;" << 2 << "  c + " << "a+  c + b;";
+    }
+    void singleLinePastePreservesWhitespace() {
+        QFETCH(QString, before);
+        QFETCH(int, position);
+        QFETCH(QString, clipboard);
+        QFETCH(QString, expected);
+        QSynedit::QSynEdit editor;
+        editor.setSyntaxer(std::make_shared<QSynedit::CppSyntaxer>());
+        editor.setFormatter(std::make_shared<QSynedit::CppFormatter>());
+        auto options = editor.getOptions();
+        options.setFlag(QSynedit::EditorOption::AutoIndent, true);
+        options.setFlag(QSynedit::EditorOption::GroupUndo, false);
+        editor.setOptions(options);
+        editor.setContent(before);
+        const QSynedit::CharPos pos{position,0};
+        editor.setCaretAndSelection(pos,pos,pos);
+        QApplication::clipboard()->setText(clipboard);
+        editor.pasteFromClipboard();
+        QCOMPARE(editor.lineText(0), expected);
+        QVERIFY(editor.getOptions().testFlag(QSynedit::EditorOption::AutoIndent));
+        editor.undo();
+        QCOMPARE(editor.lineText(0), before);
+        editor.redo();
+        QCOMPARE(editor.lineText(0), expected);
+    }
+    void pointerSizeReachesCompileAndLink() {
+        UiRegressionContext ui;
+        CompilerArgumentProbe compiler;
+        for (const QString& size : {QString("32"), QString("64"), QString("x32")}) {
+            compiler.set->setCompileOptions({{CC_CMD_OPT_POINTER_SIZE,size},
+                                            {CC_CMD_OPT_PROFILE_INFO,COMPILER_OPTION_ON},
+                                            {LINK_CMD_OPT_STRIP_EXE,COMPILER_OPTION_ON}});
+            const QString option = "-m" + size;
+            const auto c = compiler.getCCompileArguments(false);
+            const auto cpp = compiler.getCppCompileArguments(false);
+            const auto link = compiler.getLibraryArguments(FileType::Project);
+            QVERIFY2(c.contains(option), qPrintable(option));
+            QVERIFY2(cpp.contains(option), qPrintable(option));
+            QVERIFY2(link.contains(option), qPrintable(option));
+            // Keep other options' existing compile/link classification unchanged.
+            QVERIFY(!c.contains("-pg") && !cpp.contains("-pg"));
+            QVERIFY(!c.contains("-s") && !cpp.contains("-s"));
+            QVERIFY(link.contains("-pg") && link.contains("-s"));
+        }
+    }
+    void referenceLinksRespectLanguage() {
+        UiRegressionContext ui;
+        ReferenceUrlCapture capture;
+        QDesktopServices::setUrlHandler("https", &capture, "capture");
+        const auto reset = qScopeGuard([] { QDesktopServices::unsetUrlHandler("https"); });
+        for (const QString& language : {QString("zh_CN"), QString("en_US")}) {
+            ui.settings.environment().setLanguage(language);
+            const QString host = language == "zh_CN" ? "cppreference.cn" : "en.cppreference.com";
+            QVERIFY(QMetaObject::invokeMethod(ui.window.get(), "on_actionC_C_Reference_triggered", Qt::DirectConnection));
+            QCOMPARE(capture.lastUrl, QUrl("https://"+host+"/w/cpp"));
+            QVERIFY(QMetaObject::invokeMethod(ui.window.get(), "on_actionC_Reference_triggered", Qt::DirectConnection));
+            QCOMPARE(capture.lastUrl, QUrl("https://"+host+"/w/c"));
+        }
+    }
 #ifdef Q_OS_WIN
     void gdbServerDefaultAndLegacyMigration_data() {
         QTest::addColumn<int>("legacyValue");

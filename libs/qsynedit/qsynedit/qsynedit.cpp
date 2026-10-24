@@ -2965,7 +2965,18 @@ void QSynEdit::doPasteFromClipboard()
     if (text.isEmpty())
         return;
     beginEditing();
-    doSetSelTextPrimitive(splitStrings(text));
+    {
+        const QStringList lines = splitStrings(text);
+        const bool autoIndent = mOptions.testFlag(EditorOption::AutoIndent);
+        auto restore = finally([this,autoIndent] {
+            mOptions.setFlag(EditorOption::AutoIndent, autoIndent);
+        });
+        // Single-line clipboard text must keep its spaces and tabs verbatim.
+        // Multi-line paste retains the existing automatic indentation behavior.
+        if (lines.size() == 1)
+            mOptions.setFlag(EditorOption::AutoIndent, false);
+        doSetSelTextPrimitive(lines);
+    }
     endEditing();
 }
 

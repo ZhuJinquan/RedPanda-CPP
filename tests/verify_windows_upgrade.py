@@ -3,6 +3,7 @@
 All product names, association IDs, registry keys and config paths in fixture
 scripts are replaced so an installed real IDE cannot be changed by these tests.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -121,6 +122,11 @@ def run():
         assert (install / 'mingw64/payload.txt').read_text() == 'new'
         assert (install / 'mingw32/payload.txt').read_text() == 'new'
         assert not (install / 'mingw64/custom-old-marker.txt').exists()
+        for extension in ('dev', 'c', 'cpp', 'cxx', 'cc', 'hxx', 'h', 'hpp'):
+            association = rf'Software\Classes\RedPandaUpgradeTest.{extension}\Shell\Open\Command'
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, association) as key:
+                command = winreg.QueryValueEx(key, '')[0]
+                assert command == f'"{install / "RedPandaIDE.exe"}" "%1"', command
         assert project.read_bytes() == b'[Project]\r\nName=keep me\r\n'
         assert (local_config / 'settings.ini').read_bytes() == config_bytes
         assert sentinel.read_bytes() == config_bytes
@@ -139,7 +145,8 @@ def run():
         report.append({'old_arch': old_arch, 'new_arch': 'x64',
                        'auto_location': str(install), 'running_ide_blocked': True,
                        'program_and_compilers_replaced': True, 'projects_and_settings_unchanged': True,
-                       'repeat_upgrade': True, 'uninstall': True})
+                       'repeat_upgrade': True, 'uninstall': True,
+                       'all_eight_association_commands_quoted': True})
     # Only delete the one fixture config file created by this test.
     sentinel.unlink()
     config.rmdir()
@@ -183,4 +190,10 @@ def failure():
 
 
 if __name__ == '__main__':
-    {'prepare': prepare, 'run': run, 'failure': failure}[sys.argv[1]]()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', choices=('prepare', 'run', 'failure'))
+    parser.add_argument('--work-dir', type=Path, default=WORK)
+    args = parser.parse_args()
+    WORK = args.work_dir.resolve()
+    WORK.relative_to(ROOT / 'artifacts')
+    {'prepare': prepare, 'run': run, 'failure': failure}[args.mode]()

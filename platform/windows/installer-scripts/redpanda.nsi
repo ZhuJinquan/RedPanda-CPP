@@ -231,7 +231,7 @@ Section "$(SectionAssocExtNameBegin) .dev $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.dev" "" "DevCpp.dev"
   WriteRegStr ShCtx "Software\Classes\DevCpp.dev" "" "$(StrAppName) $(StrProjectFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.dev\DefaultIcon" "" '$0,3'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.dev\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.dev\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -242,7 +242,7 @@ Section "$(SectionAssocExtNameBegin) .c $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.c" "" "DevCpp.c"
   WriteRegStr ShCtx "Software\Classes\DevCpp.c" "" "C $(StrSourceFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.c\DefaultIcon" "" '$0,4'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.c\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.c\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -253,7 +253,7 @@ Section "$(SectionAssocExtNameBegin) .cpp $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.cpp" "" "DevCpp.cpp"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cpp" "" "C++ $(StrSourceFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cpp\DefaultIcon" "" '$0,5'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.cpp\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.cpp\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -264,7 +264,7 @@ Section "$(SectionAssocExtNameBegin) .cxx $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.cxx" "" "DevCpp.cxx"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cxx" "" "C++ $(StrSourceFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cxx\DefaultIcon" "" '$0,5'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.cxx\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.cxx\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -275,7 +275,7 @@ Section "$(SectionAssocExtNameBegin) .cc $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.cc" "" "DevCpp.cc"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cc" "" "C++ $(StrSourceFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.cc\DefaultIcon" "" '$0,5'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.cc\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.cc\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -286,7 +286,7 @@ Section "$(SectionAssocExtNameBegin) .hxx $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.hxx" "" "DevCpp.hxx"
   WriteRegStr ShCtx "Software\Classes\DevCpp.hxx" "" "C++ $(StrHeaderFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.hxx\DefaultIcon" "" '$0,7'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.hxx\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.hxx\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -297,7 +297,7 @@ Section "$(SectionAssocExtNameBegin) .h $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.h" "" "DevCpp.h"
   WriteRegStr ShCtx "Software\Classes\DevCpp.h" "" "C $(StrHeaderFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.h\DefaultIcon" "" '$0,6'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.h\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.h\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 
@@ -308,7 +308,7 @@ Section "$(SectionAssocExtNameBegin) .hpp $(SectionAssocExtNameEnd)"
   WriteRegStr ShCtx "Software\Classes\.hpp" "" "DevCpp.hpp"
   WriteRegStr ShCtx "Software\Classes\DevCpp.hpp" "" "C++ $(StrHeaderFile)"
   WriteRegStr ShCtx "Software\Classes\DevCpp.hpp\DefaultIcon" "" '$0,7'
-  WriteRegStr ShCtx "Software\Classes\DevCpp.hpp\Shell\Open\Command" "" '$0 "%1"'
+  WriteRegStr ShCtx "Software\Classes\DevCpp.hpp\Shell\Open\Command" "" '"$0" "%1"'
   ${NotifyShell_AssocChanged}
 SectionEnd
 

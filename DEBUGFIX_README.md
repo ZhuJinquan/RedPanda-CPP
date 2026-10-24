@@ -4,7 +4,7 @@
 
 ## 安装
 
-运行 `dist/RedPanda-3.5-beta2-r3-Setup.exe`。安装器及 IDE 均显示 `3.5 Beta 2`，不显示构建计数或修复版后缀。安装升级流程沿用原版：
+运行 `dist/RedPanda-3.5-beta2-r4-Setup.exe`。安装器及 IDE 均显示 `3.5 Beta 2`，不显示构建计数或修复版后缀。安装升级流程沿用原版：
 
 1. 根据安装范围和 32/64 位注册表记录自动找到旧安装目录。
 2. 安装前检查 IDE 是否占用程序文件；提示先保存工程并关闭 IDE，然后重试。不会强行终止 IDE。
@@ -24,6 +24,14 @@
 - 赋值表达式按 GDB/MI 转义，界面由调试器读回值更新；非法赋值不伪造成功值。
 - 保留 3.5 的从 0 开始的编辑器行号约定、监视表达式格式和新版停止信号接口。
 
+## r4 问题核对与修复
+
+- #676：原帖所示的 `setFocus` 条件逻辑在 3.5 基线已经移除。用生产停止事件和主窗口验证：从另一个文件暂停到有效源码位置时，正确切换文件并定位行号。本次未改动暂停逻辑；GDB 停在无源码的系统 DLL 时仍按原逻辑显示调用栈。
+- #621：仅修正安装器的八类文件关联命令，为程序路径加引号；保留 IDE 内已有的关联设置逻辑。
+- #766：仅对单行剪贴板粘贴保留空格、Tab 和原缩进，支持撤销/重做；多行粘贴和键盘输入的自动缩进逻辑不变。
+- #609：仅使位宽选项 `-m32/-m64/-mx32` 同时进入 C/C++ 编译和链接参数，不改变其他选项的分类。这不等于安装包增加了 32 位工具链。
+- #671：仅将简体中文菜单的 C/C++ 在线参考地址改为 `cppreference.cn`；本地 CHM 优先逻辑及英文地址不变。
+
 ## 构建与验证
 
 ```powershell
@@ -36,12 +44,13 @@
 
 验证记录：
 
-- `artifacts/debugwatch-beta35-tests.txt`：16/16 通过，直接测试生产调试类和配置持久化，包括缺失/关闭/开启三种旧配置、无配置默认开启、端口与其他设置保留，以及迁移后主动关闭不会再次被覆盖。
+- `artifacts/debugwatch-beta35-tests.txt`：24/24 通过，覆盖原调试/迁移回归及暂停源码定位、粘贴空白和撤销重做、位宽参数、参考菜单语言分支。
+- `artifacts/full-regression-r4-windows.log`：Windows 原生字体后端四组 CTest 全部通过；其中共享编辑器 363 个用例通过。离屏后端的 Emoji 字宽结果不同，未为此修改产品或测试断言。
 - `artifacts/gdb-server-startup-migration.json`：实际启动新版 IDE，将独立旧配置中的 `false` 迁移为 `true` 并落盘，保留自定义端口 `41239`。主窗口标题为“小熊猫C++ 3.5 Beta 2”。
 - `artifacts/live-gdb-beta35-smoke.log`：真实独立 GDB/MI 会话通过赋值读回、非法值、条件断点、删除、运行中暂停后新增并命中断点、正常退出。
-- `artifacts/upgrade-tests/verification.json`：隔离注册表与测试载荷覆盖 x86→x64、x64→x64、中文和空格路径、无 InstallLocation 的旧记录、运行中拒绝升级、重复安装、卸载、工程与配置保留、旧工具链替换。
-- `artifacts/upgrade-tests/uninstall-failure.json`：旧卸载器返回 7 时，新安装器返回 2 并在覆盖程序文件前中止。
-- `artifacts/installer-integrity.txt` 与 `artifacts/installer-payload-verification.json`：最终安装包完整性及关键载荷校验。
+- `artifacts/upgrade-tests-r4/verification.json`：隔离注册表与测试载荷覆盖 x86→x64、x64→x64、中文和空格路径、无 InstallLocation 的旧记录、运行中拒绝升级、重复安装、卸载、工程与配置保留、旧工具链替换，以及八类文件关联的程序路径引号。
+- `artifacts/upgrade-tests-r4/uninstall-failure.json`：旧卸载器返回 7 时，新安装器返回 2 并在覆盖程序文件前中止。
+- `artifacts/installer-r4-integrity.txt` 与 `artifacts/installer-r4-payload-verification.json`：最终安装包完整性及关键载荷校验。
 - `artifacts/pmsm-server-running-breakpoint.log`：已有 PMSM Windows SIL EXE 在独立 GDB Server 会话中，运行后暂停、插入 `AD_IO_DA.c:164`、恢复并成功命中。未改动该仿真工程。
 
 升级回归使用测试载荷和专用产品标识，没有覆盖本机正在使用的正式安装。新版 IDE 已独立启动并打开测试源码；这不等同于全部 IDE 功能或用户工程的完整回归。安装提示的截图检查因界面授权超时未完成。

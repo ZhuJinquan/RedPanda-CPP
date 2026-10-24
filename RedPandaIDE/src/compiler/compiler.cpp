@@ -445,7 +445,8 @@ QStringList Compiler::getCCompileArguments(bool checkSyntax)
         if (compileOptions[key]=="")
             continue;
         PCompilerOption pOption = CompilerInfoManager::getCompilerOption(compilerSet()->compilerType(), key);
-        if (pOption && pOption->isC && !pOption->isLinker) {
+        if (pOption && pOption->isC
+                && (!pOption->isLinker || key == CC_CMD_OPT_POINTER_SIZE)) {
             if (pOption->type == CompilerOptionType::Checkbox)
                 result << pOption->setting;
             else if (pOption->type == CompilerOptionType::Input)
@@ -496,7 +497,8 @@ QStringList Compiler::getCppCompileArguments(bool checkSyntax)
         if (compileOptions[key]=="")
             continue;
         PCompilerOption pOption = CompilerInfoManager::getCompilerOption(compilerSet()->compilerType(), key);
-        if (pOption && pOption->isCpp && !pOption->isLinker) {
+        if (pOption && pOption->isCpp
+                && (!pOption->isLinker || key == CC_CMD_OPT_POINTER_SIZE)) {
             if (pOption->type == CompilerOptionType::Checkbox)
                 result << pOption->setting;
             else if (pOption->type == CompilerOptionType::Input)
