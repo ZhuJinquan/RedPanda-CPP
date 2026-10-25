@@ -22,12 +22,73 @@
 #include <QDomDocument>
 #include <QOperatingSystemVersion>
 #include <QSysInfo>
+#include <QDir>
+#include <QFileInfo>
 
 #ifdef Q_OS_WIN
 using pIsWow64Process2_t = BOOL (WINAPI *)(
     HANDLE hProcess, USHORT *pProcessMachine, USHORT *pNativeMachine
 );
 #endif
+
+QProcessEnvironment bundledBuildToolsEnvironment(
+        const QProcessEnvironment &environment, const QString &applicationDir)
+{
+    QProcessEnvironment result = environment;
+#ifdef Q_OS_WIN
+    // Official CMake 4.3+ Windows binaries require Windows 10. Older systems
+    // keep the previous tool lookup and the existing Makefile workflow.
+    if (QOperatingSystemVersion::current() < QOperatingSystemVersion::Windows10)
+        return result;
+
+    QStringList toolDirs;
+    const QString configuredHome = environment.value("CMAKE_HOME");
+    if (!configuredHome.isEmpty()) {
+        // Honor an existing explicit CMake selection, including bin/exe forms.
+        const QDir home(configuredHome);
+        const QStringList candidates{configuredHome, home.filePath("bin/cmake.exe"),
+                                     home.filePath("cmake.exe")};
+        for (const QString &candidate : candidates) {
+            const QFileInfo file(candidate);
+            if (file.isFile()) {
+                toolDirs.append(file.absolutePath());
+                break;
+            }
+        }
+    } else {
+        const QDir home(QDir(applicationDir).filePath("tools/cmake"));
+        if (QFileInfo(home.filePath("bin/cmake.exe")).isFile()
+                && QFileInfo(home.filePath("share")).isDir()) {
+            result.insert("CMAKE_HOME", QDir::toNativeSeparators(home.absolutePath()));
+            toolDirs.append(home.filePath("bin"));
+        }
+    }
+    const QDir ninja(QDir(applicationDir).filePath("tools/ninja"));
+    if (QFileInfo(ninja.filePath("ninja.exe")).isFile())
+        toolDirs.append(ninja.absolutePath());
+    if (!toolDirs.isEmpty()) {
+        QStringList entries;
+        if (!environment.value("PATH").isEmpty())
+            entries = environment.value("PATH").split(';', Qt::KeepEmptyParts);
+        for (const QString &dir : toolDirs) {
+            const QString normalized = QDir::cleanPath(QDir::fromNativeSeparators(dir));
+            for (auto it = entries.begin(); it != entries.end();) {
+                if (QDir::cleanPath(QDir::fromNativeSeparators(*it)).compare(
+                            normalized, Qt::CaseInsensitive) == 0)
+                    it = entries.erase(it);
+                else
+                    ++it;
+            }
+        }
+        for (QString &dir : toolDirs)
+            dir = QDir::toNativeSeparators(dir);
+        result.insert("PATH", (toolDirs + entries).join(';'));
+    }
+#else
+    Q_UNUSED(applicationDir)
+#endif
+    return result;
+}
 
 #ifdef Q_OS_WIN
 static bool gIsGreenEdition = true;

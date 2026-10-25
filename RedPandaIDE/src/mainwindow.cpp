@@ -47,6 +47,7 @@
 #include <QActionGroup>
 
 #include "mainwindow.h"
+#include "utils/os.h"
 #include "ui_mainwindow.h"
 #include "editormanager.h"
 #include "editor.h"
@@ -3954,7 +3955,8 @@ void MainWindow::openShell(const QString &folder, const QString &shellCommand, c
         args->flags |= CREATE_NEW_CONSOLE;
         args->startupInfo->dwFlags &=  ~STARTF_USESTDHANDLES; //
     });
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env = bundledBuildToolsEnvironment(
+                QProcessEnvironment::systemEnvironment(), QCoreApplication::applicationDirPath());
     QString path = env.value("PATH");
     QStringList pathAdded;
     pathAdded.append(binDirs);

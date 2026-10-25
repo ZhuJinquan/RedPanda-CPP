@@ -142,6 +142,17 @@ Section "$(SectionMainName)" SectionMain
   File "NEWS.md"
   File "README.md"
   File "qt.conf"
+  !ifdef HAVE_BUILD_TOOLS
+    ${If} ${AtLeastBuild} 10240
+      SetOutPath "$INSTDIR\tools"
+      File "tools\build-tools-manifest.json"
+      SetOutPath "$INSTDIR\tools\cmake"
+      File /r "tools\cmake\*"
+      SetOutPath "$INSTDIR\tools\ninja"
+      File /r "tools\ninja\*"
+      SetOutPath "$INSTDIR"
+    ${EndIf}
+  !endif
   !ifdef HAVE_SHARED_RUNTIME
     !include "runtime-files.nsh"
   !endif
@@ -584,6 +595,15 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\mingw32"
   RMDir /r "$INSTDIR\mingw64"
   RMDir /r "$INSTDIR\llvm-mingw"
+  !ifdef HAVE_BUILD_TOOLS
+    ; Remove only installer-managed tools; retain other user tool directories.
+    IfFileExists "$INSTDIR\tools\build-tools-manifest.json" 0 skip_remove_build_tools
+    RMDir /r "$INSTDIR\tools\cmake"
+    RMDir /r "$INSTDIR\tools\ninja"
+    Delete "$INSTDIR\tools\build-tools-manifest.json"
+    RMDir "$INSTDIR\tools"
+skip_remove_build_tools:
+  !endif
 
   RMDir "$INSTDIR"
 

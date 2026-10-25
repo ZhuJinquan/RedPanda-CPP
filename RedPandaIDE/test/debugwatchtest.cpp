@@ -14,6 +14,8 @@
 #include <qsynedit/formatter/cppformatter.h>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 class UiRegressionContext {
 public:
@@ -62,6 +64,7 @@ public:
     using Compiler::getCCompileArguments;
     using Compiler::getCppCompileArguments;
     using Compiler::getLibraryArguments;
+    using Compiler::runCommand;
 protected:
     PCompilerSet compilerSet() override { return set; }
     bool prepareForCompile() override { return false; }
@@ -93,6 +96,121 @@ class DebugWatchTest : public QObject {
         return client;
     }
 private slots:
+#ifdef Q_OS_WIN
+    void bundledToolsEnvironmentIsOptional() {
+        QTemporaryDir directory;
+        QProcessEnvironment original;
+        original.insert("PATH", "original-bin;second-bin");
+        original.insert("SHELL", "existing-shell");
+        original.insert("CMAKE_GENERATOR", "MinGW Makefiles");
+        QVERIFY(bundledBuildToolsEnvironment(original, directory.path()) == original);
+    }
+    void bundledToolsDiscoverAfterRelocation() {
+        QTemporaryDir directory;
+        const QString root = directory.filePath(QString::fromUtf8("IDE 中文 with spaces"));
+        QVERIFY(QDir().mkpath(root+"/tools/cmake/bin"));
+        QVERIFY(QDir().mkpath(root+"/tools/cmake/share"));
+        QVERIFY(QDir().mkpath(root+"/tools/ninja"));
+        for (const QString& name : {QString("tools/cmake/bin/cmake.exe"), QString("tools/ninja/ninja.exe")}) {
+            QFile file(root+"/"+name);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("fixture");
+        }
+        QProcessEnvironment original;
+        original.insert("PATH", "original-bin;second-bin");
+        original.insert("CMAKE_GENERATOR", "MinGW Makefiles");
+        original.insert("CMAKE_MAKE_PROGRAM", "original-mingw32-make.exe");
+        const auto configured = bundledBuildToolsEnvironment(original, root);
+        QCOMPARE(QDir::fromNativeSeparators(configured.value("CMAKE_HOME")), root+"/tools/cmake");
+        const auto path = configured.value("PATH").split(';');
+        QCOMPARE(QDir::fromNativeSeparators(path[0]), root+"/tools/cmake/bin");
+        QCOMPARE(QDir::fromNativeSeparators(path[1]), root+"/tools/ninja");
+        QCOMPARE(path.mid(2), QStringList({"original-bin","second-bin"}));
+        QCOMPARE(configured.value("CMAKE_GENERATOR"), original.value("CMAKE_GENERATOR"));
+        QCOMPARE(configured.value("CMAKE_MAKE_PROGRAM"), original.value("CMAKE_MAKE_PROGRAM"));
+        QVERIFY(bundledBuildToolsEnvironment(configured, root) == configured);
+        QVERIFY(!original.contains("CMAKE_HOME"));
+        const QString moved = directory.filePath("Moved IDE");
+        QVERIFY(QDir().rename(root, moved));
+        const auto relocated = bundledBuildToolsEnvironment(original, moved);
+        QCOMPARE(QDir::fromNativeSeparators(relocated.value("CMAKE_HOME")), moved+"/tools/cmake");
+        QVERIFY(!relocated.value("PATH").contains(root));
+    }
+    void explicitCMakeHomeIsPreserved() {
+        QTemporaryDir directory;
+        const QString root = directory.filePath("IDE");
+        const QString custom = directory.filePath("Custom CMake");
+        for (const QString& path : {root+"/tools/cmake/bin", root+"/tools/cmake/share", custom+"/bin"})
+            QVERIFY(QDir().mkpath(path));
+        for (const QString& name : {root+"/tools/cmake/bin/cmake.exe", custom+"/bin/cmake.exe"}) {
+            QFile file(name);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        QProcessEnvironment original;
+        original.insert("PATH", "original-bin");
+        original.insert("CMAKE_HOME", custom);
+        const auto configured = bundledBuildToolsEnvironment(original, root);
+        QCOMPARE(configured.value("CMAKE_HOME"), custom);
+        QCOMPARE(QDir::fromNativeSeparators(configured.value("PATH").split(';')[0]), custom+"/bin");
+        QVERIFY(!configured.value("PATH").contains(root));
+        original.insert("CMAKE_HOME", directory.filePath("missing-explicit-choice"));
+        QVERIFY(bundledBuildToolsEnvironment(original, root) == original);
+    }
+    void incompleteCMakePackageIsNotSelected() {
+        QTemporaryDir directory;
+        QVERIFY(QDir().mkpath(directory.path()+"/tools/cmake/bin"));
+        QFile file(directory.path()+"/tools/cmake/bin/cmake.exe");
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.close();
+        QProcessEnvironment original;
+        original.insert("PATH", "original-bin");
+        QVERIFY(bundledBuildToolsEnvironment(original, directory.path()) == original);
+    }
+    void legacyMakeUsesBundledCMakeAndNinja() {
+        const QString make = qEnvironmentVariable("REDPANDA_TEST_MAKE");
+        if (make.isEmpty())
+            QSKIP("Set REDPANDA_TEST_MAKE and stage bundled tools to run the real Make/CMake/Ninja integration.");
+        QVERIFY(QFileInfo(make).isFile());
+        const QString toolRoot = QCoreApplication::applicationDirPath()+"/tools";
+        QFile manifestFile(toolRoot+"/build-tools-manifest.json");
+        QVERIFY(manifestFile.open(QIODevice::ReadOnly));
+        const QJsonObject manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+        UiRegressionContext ui;
+        QTemporaryDir project;
+        const QString gcc = QDir::fromNativeSeparators(QFileInfo(make).absolutePath()+"/gcc.exe");
+        const auto write = [&](const QString& name, const QByteArray& data) {
+            QFile file(project.filePath(name));
+            return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
+        };
+        QVERIFY(write("main.c", "int main(void) { return 0; }\n"));
+        QVERIFY(write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.19)\nproject(legacy_probe LANGUAGES C)\nadd_executable(probe main.c)\n"));
+        const QByteArray recipe = "all:\n\t@cmake --version > cmake-version.txt\n\t@ninja --version > ninja-version.txt\n\t@cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=\""
+                + gcc.toUtf8() + "\"\n\t@cmake --build build\n\t@build\\probe.exe\n\t@echo success> success.txt\n";
+        QVERIFY(write("Makefile", recipe));
+        CompilerArgumentProbe compiler;
+        compiler.set->setCCompiler(gcc);
+        compiler.set->binDirs().append(QFileInfo(make).absolutePath());
+        QSignalSpy errors(&compiler, &Compiler::compileErrorOccured);
+        QSignalSpy output(&compiler, &Compiler::compileOutput);
+        compiler.runCommand(make, {"-f","Makefile","all"}, project.path());
+        QString transcript;
+        for (const auto &arguments : output)
+            transcript += arguments[0].toString();
+        QVERIFY2(errors.isEmpty(), qPrintable(transcript));
+        QVERIFY2(QFileInfo(project.filePath("success.txt")).isFile(), qPrintable(transcript));
+        QFile cmakeVersion(project.filePath("cmake-version.txt"));
+        QVERIFY(cmakeVersion.open(QIODevice::ReadOnly));
+        QVERIFY(cmakeVersion.readAll().contains(manifest["cmake"].toObject()["version"].toString().toUtf8()));
+        QFile ninjaVersion(project.filePath("ninja-version.txt"));
+        QVERIFY(ninjaVersion.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(ninjaVersion.readAll()).trimmed(), manifest["ninja"].toObject()["version"].toString());
+        QFile cache(project.filePath("build/CMakeCache.txt"));
+        QVERIFY(cache.open(QIODevice::ReadOnly));
+        const QByteArray contents = cache.readAll();
+        QVERIFY(contents.contains("CMAKE_GENERATOR:INTERNAL=Ninja"));
+        QVERIFY(contents.contains(QDir::fromNativeSeparators(toolRoot+"/ninja/ninja.exe").toUtf8()));
+    }
+#endif
     void pauseActivatesSourceEditor() {
         UiRegressionContext ui;
         const QString source = ui.directory.filePath("control.c");

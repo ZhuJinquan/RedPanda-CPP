@@ -54,13 +54,22 @@ def prepare():
         for name in ('mingw32', 'mingw64', 'templates'):
             (folder / name).mkdir(exist_ok=True)
             (folder / name / 'payload.txt').write_text(flavor)
-        for arch in ('x86', 'x64'):
+        if flavor == 'new':
+            for path in ('tools/cmake/bin/cmake.exe', 'tools/cmake/share/cmake-fixture/Modules/CMake.cmake',
+                         'tools/cmake/doc/cmake/LICENSE.rst', 'tools/ninja/ninja.exe', 'tools/ninja/LICENSE.txt',
+                         'tools/build-tools-manifest.json'):
+                target = folder / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('new fixture payload')
+        for arch in (('x86', 'x64') if flavor == 'old' else ('x64',)):
             command = [str(NSIS), '/V2', f'/DAPP_VERSION={version}', f'/DARCH={arch}',
                        f'/DFINALNAME={folder}/setup-{arch}.exe', '/DMINGW32_COMPILER_NAME=Test32',
                        '/DMINGW64_COMPILER_NAME=Test64', '/DHAVE_MINGW32', '/DHAVE_MINGW64',
                        '/DREQUIRED_WINDOWS_BUILD=7601', '/DREQUIRED_WINDOWS_NAME=Windows 7', 'redpanda.nsi']
             if flavor == 'old':
                 command.insert(-1, f'/DFIXTURE_INSTALL_DIR={WORK / f"installed {arch} 中文"}')
+            else:
+                command.insert(-1, '/DHAVE_BUILD_TOOLS')
             result = subprocess.run(command, cwd=folder, capture_output=True, text=True)
             (folder / f'compile-{arch}.log').write_text(result.stdout + result.stderr, encoding='utf-8')
             if result.returncode:
@@ -99,6 +108,9 @@ def run():
         local_config = install / 'config'
         local_config.mkdir()
         (local_config / 'settings.ini').write_bytes(config_bytes)
+        user_tool = install / 'tools/custom/keep.txt'
+        user_tool.parent.mkdir(parents=True)
+        user_tool.write_text('preserve user tool')
         (install / 'mingw64/custom-old-marker.txt').write_text('old compiler addition')
         # Test legacy registrations that only have UninstallString as well.
         if old_arch == 'x86':
@@ -122,6 +134,11 @@ def run():
         assert (install / 'mingw64/payload.txt').read_text() == 'new'
         assert (install / 'mingw32/payload.txt').read_text() == 'new'
         assert not (install / 'mingw64/custom-old-marker.txt').exists()
+        for path in ('tools/cmake/bin/cmake.exe', 'tools/cmake/share/cmake-fixture/Modules/CMake.cmake',
+                     'tools/cmake/doc/cmake/LICENSE.rst', 'tools/ninja/ninja.exe', 'tools/ninja/LICENSE.txt',
+                     'tools/build-tools-manifest.json'):
+            assert (install / path).read_text() == 'new fixture payload'
+        assert user_tool.read_text() == 'preserve user tool'
         for extension in ('dev', 'c', 'cpp', 'cxx', 'cc', 'hxx', 'h', 'hpp'):
             association = rf'Software\Classes\RedPandaUpgradeTest.{extension}\Shell\Open\Command'
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, association) as key:
@@ -142,11 +159,17 @@ def run():
         assert not (install / 'RedPandaIDE.exe').exists()
         assert project.exists()
         assert sentinel.read_bytes() == config_bytes
+        assert not (install / 'tools/cmake').exists()
+        assert not (install / 'tools/ninja').exists()
+        assert not (install / 'tools/build-tools-manifest.json').exists()
+        assert user_tool.read_text() == 'preserve user tool'
         report.append({'old_arch': old_arch, 'new_arch': 'x64',
                        'auto_location': str(install), 'running_ide_blocked': True,
                        'program_and_compilers_replaced': True, 'projects_and_settings_unchanged': True,
                        'repeat_upgrade': True, 'uninstall': True,
-                       'all_eight_association_commands_quoted': True})
+                       'all_eight_association_commands_quoted': True,
+                       'bundled_tools_installed_and_uninstalled': True,
+                       'unrelated_user_tools_preserved': True})
     # Only delete the one fixture config file created by this test.
     sentinel.unlink()
     config.rmdir()

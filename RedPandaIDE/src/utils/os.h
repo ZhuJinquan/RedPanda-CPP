@@ -17,6 +17,7 @@
 #ifndef UTILS_OS_H
 #define UTILS_OS_H
 #include <QString>
+#include <QProcessEnvironment>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -39,5 +40,9 @@ struct ExternalResource {
 
 QString appArch();
 QString osArch();
+
+// Process-local defaults for build commands; does not change system settings.
+QProcessEnvironment bundledBuildToolsEnvironment(
+        const QProcessEnvironment &environment, const QString &applicationDir);
 
 #endif // UTILS_OS_H

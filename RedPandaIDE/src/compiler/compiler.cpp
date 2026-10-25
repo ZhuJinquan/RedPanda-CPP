@@ -30,6 +30,7 @@
 #include <QTime>
 #include <QApplication>
 #include "../editor.h"
+#include "../utils/os.h"
 #include "../mainwindow.h"
 #include "../editormanager.h"
 #include "../parser/cppparser.h"
@@ -725,7 +726,8 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
     QString cmdDir = extractFileDir(cmd);
     bool compilerErrorUTF8=compilerSet()->isCompilerUsingUTF8();
     bool outputUTF8=compilerSet()->isCompilerUsingUTF8();
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env = bundledBuildToolsEnvironment(
+                QProcessEnvironment::systemEnvironment(), QCoreApplication::applicationDirPath());
     QString path = env.value("PATH");
 #ifdef Q_OS_WIN
     QStringList binDirs=compilerSet()->binDirs();

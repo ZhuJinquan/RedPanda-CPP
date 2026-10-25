@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$QtDir = (Join-Path $PSScriptRoot '.tools/Qt/5.15.2/msvc2019_64'),
-    [string]$PackageName = 'RedPanda-3.5-beta2-r4',
+    [string]$PackageName = 'RedPanda-3.5-beta2-r5',
     [switch]$RunTests,
     [switch]$Installer,
     [switch]$PackageOnly,
@@ -39,18 +39,34 @@ $jom = 'D:/Qt/Tools/QtCreator/bin/jom/jom.exe'
 function Check-Exit([string]$step) {
     if ($LASTEXITCODE -ne 0) { throw "$step failed (exit $LASTEXITCODE)." }
 }
+$buildTools = & "$PSScriptRoot/packages/msvc/prepare_build_tools.ps1" -ProjectRoot $PSScriptRoot
+$cmakeExe = Join-Path $buildTools.CMakeRoot 'bin/cmake.exe'
+function Copy-BuildTools([string]$Destination) {
+    $toolsDir = Join-Path $Destination 'tools'
+    New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+    foreach ($name in @('cmake','ninja')) {
+        $source = if ($name -eq 'cmake') { $buildTools.CMakeRoot } else { $buildTools.NinjaRoot }
+        & robocopy.exe $source (Join-Path $toolsDir $name) /E /R:2 /W:1 /NFL /NDL /NJH /NJS
+        if ($LASTEXITCODE -ge 8) { throw "Cannot stage build tool: $name" }
+    }
+    Copy-Item -LiteralPath $buildTools.ManifestPath -Destination (Join-Path $toolsDir 'build-tools-manifest.json')
+}
 if (-not $PackageOnly) {
-    cmake -S $PSScriptRoot -B $buildDir -G 'NMake Makefiles JOM' "-DCMAKE_MAKE_PROGRAM=$jom" `
+    & $cmakeExe -S $PSScriptRoot -B $buildDir -G 'NMake Makefiles JOM' "-DCMAKE_MAKE_PROGRAM=$jom" `
         '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_PREFIX_PATH=$QtDir" "-DCMAKE_INSTALL_PREFIX=$pkgDir" `
         '-DCMAKE_CXX_FLAGS=/utf-8 /MP8' '-DPORTABLE_CONFIG=registry' '-DDEBUGWATCH_TESTS=ON' `
         "-DREDPANDA_DISPLAY_VERSION=$displayVersion" `
         '-DCMAKE_C_FLAGS_DEBUG=/Z7 /Ob0 /Od /RTC1' '-DCMAKE_CXX_FLAGS_DEBUG=/Z7 /Ob0 /Od /RTC1'
     Check-Exit 'Configure'
-    cmake --build $buildDir --target RedPandaIDE ConsolePauser --parallel 8
+    & $cmakeExe --build $buildDir --target RedPandaIDE ConsolePauser --parallel 8
     Check-Exit 'Build'
     if ($RunTests) {
-        cmake --build $buildDir --target all-test-targets --parallel 8
+        & $cmakeExe --build $buildDir --target all-test-targets --parallel 8
         Check-Exit 'Build regression tests'
+        Copy-BuildTools (Join-Path $buildDir 'RedPandaIDE')
+        $env:REDPANDA_TEST_MAKE = Join-Path $ToolchainRoot 'mingw64/bin/mingw32-make.exe'
+        $originalCmakeHome = [Environment]::GetEnvironmentVariable('CMAKE_HOME','Process')
+        Remove-Item Env:CMAKE_HOME -ErrorAction SilentlyContinue
         $env:QT_QPA_PLATFORM = 'offscreen'
         $env:QT_QPA_FONTDIR = "$env:WINDIR/Fonts"
         & "$buildDir/RedPandaIDE/test-debugwatch.exe" -o "$PSScriptRoot/artifacts/debugwatch-beta35-tests.txt,txt"
@@ -59,11 +75,12 @@ if (-not $PackageOnly) {
         # The focused suite above already ran once and saved its detailed report.
         $env:QT_QPA_PLATFORM = 'windows'
         Remove-Item Env:QT_QPA_FONTDIR
-        ctest --test-dir $buildDir -E '^test-debugwatch$' --output-on-failure --timeout 180
+        & (Join-Path $buildTools.CMakeRoot 'bin/ctest.exe') --test-dir $buildDir -E '^test-debugwatch$' --output-on-failure --timeout 180
         Check-Exit 'Editor and parser regressions'
         Remove-Item Env:QT_QPA_PLATFORM
+        if ($null -ne $originalCmakeHome) { $env:CMAKE_HOME = $originalCmakeHome }
     }
-    cmake --install $buildDir
+    & $cmakeExe --install $buildDir
     Check-Exit 'Install staging'
     & "$qtBin/windeployqt.exe" --release --compiler-runtime "$pkgDir/RedPandaIDE.exe"
     Check-Exit 'Deploy Qt'
@@ -74,6 +91,7 @@ if (-not $PackageOnly) {
     Copy-Item "$crtDir/*.dll" $pkgDir
     Copy-Item "$ToolchainRoot/astyle.exe" $pkgDir
 }
+Copy-BuildTools $pkgDir
 if ($Installer) {
     # Use the upstream full-install layout: the old uninstaller removes bundled
     # compilers, so include replacement compilers in the new full installer.
@@ -121,7 +139,7 @@ if ($Installer) {
         & $nsis /V3 "/DAPP_VERSION=$appVersion" /DARCH=x64 "/DFINALNAME=$PSScriptRoot/dist/$PackageName-Setup.exe" `
             "/DAPP_DISPLAY_VERSION=$displayVersion" `
             '/DMINGW32_COMPILER_NAME=MinGW-w64 GCC 11.5 (32-bit)' '/DMINGW64_COMPILER_NAME=MinGW-w64 GCC 11.5 (64-bit)' `
-            @compilerFlags /DHAVE_SHARED_RUNTIME /DREQUIRED_WINDOWS_BUILD=7601 `
+            @compilerFlags /DHAVE_SHARED_RUNTIME /DHAVE_BUILD_TOOLS /DREQUIRED_WINDOWS_BUILD=7601 `
             '/DREQUIRED_WINDOWS_NAME=Windows 7 SP1' redpanda.nsi
         Check-Exit 'NSIS installer'
     } finally { Pop-Location }
