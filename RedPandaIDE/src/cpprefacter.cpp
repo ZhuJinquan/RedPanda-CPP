@@ -44,7 +44,15 @@ bool CppRefacter::findOccurence(Editor *editor, const CharPos &pos)
         editor->parser()->unFreeze();
     });
     // get full phrase (such as s.name instead of name)
-    QStringList expression = editor->getExpressionAtPosition(pos);
+    CharPos symbolPos = pos;
+    // Selection ends immediately after the name. Resolve the name rather
+    // than an adjacent '=', ';' or '(' at the caret position.
+    if (symbolPos.ch > 0 && !editor->isIdentChar(editor->charAt(symbolPos))) {
+        const CharPos previous{symbolPos.ch-1, symbolPos.line};
+        if (editor->isIdentChar(editor->charAt(previous)))
+            symbolPos = previous;
+    }
+    QStringList expression = editor->getExpressionAtPosition(symbolPos);
     // Find it's definition
     PStatement statement = editor->parser()->findStatementOf(
                 editor->filename(),

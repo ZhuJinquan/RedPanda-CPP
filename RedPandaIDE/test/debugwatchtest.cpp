@@ -9,6 +9,8 @@
 #include "systemconsts.h"
 #include "autolinkmanager.h"
 #include "utils/os.h"
+#include "cpprefacter.h"
+#include "project.h"
 #include <qt_utils/charsetinfo.h>
 #include <qsynedit/syntaxer/cpp.h>
 #include <qsynedit/formatter/cppformatter.h>
@@ -96,6 +98,142 @@ class DebugWatchTest : public QObject {
         return client;
     }
 private slots:
+    void projectSymbolReferences_data() {
+        QTest::addColumn<QString>("projectFile");
+        QTest::newRow("extern-variable") << QString();
+        const QString project = qEnvironmentVariable("REDPANDA_REFERENCE_PROJECT");
+        if (!project.isEmpty())
+            QTest::newRow("user-project") << project;
+    }
+    void projectSymbolReferences() {
+        QFETCH(QString, projectFile);
+        UiRegressionContext ui;
+        const QString copy = ui.directory.filePath("references.dev");
+        SimpleIni settings;
+        QStringList files;
+        if (projectFile.isEmpty()) {
+            for (const auto &entry : QList<QPair<QString,QByteArray>>{
+                     {"shared.h", "extern float M_SPD_fout;\n"},
+                     {"define.c", "#include \"shared.h\"\nfloat M_SPD_fout;\n"},
+                     {"use.c", "#include \"shared.h\"\nvoid update(void) { M_SPD_fout = 1; }\n"}}) {
+                const QString path = ui.directory.filePath(entry.first);
+                QFile file(path);
+                QVERIFY(file.open(QIODevice::WriteOnly));
+                QCOMPARE(file.write(entry.second), qint64(entry.second.size()));
+                files.append(path);
+            }
+        } else {
+            SimpleIni original;
+            QVERIFY(original.LoadFile(projectFile.toLocal8Bit()) >= 0);
+            const QDir base(QFileInfo(projectFile).absolutePath());
+            const int count = original.GetLongValue("Project", "UnitCount", 0);
+            QVERIFY(count > 0);
+            for (int i=1; i<=count; ++i)
+                files.append(QDir::cleanPath(base.absoluteFilePath(QString::fromUtf8(original.GetValue(QString("Unit%1").arg(i).toUtf8(), "FileName", "")))));
+            QStringList includes;
+            for (const QString &path : QString::fromUtf8(original.GetValue("Project", "Includes", "")).split(';', Qt::SkipEmptyParts))
+                includes.append(QDir::cleanPath(base.absoluteFilePath(path)));
+            settings.SetValue("Project", "Includes", includes.join(';').toUtf8());
+        }
+        settings.SetValue("Project", "Name", "Reference regression");
+        settings.SetLongValue("Project", "Ver", 3);
+        settings.SetLongValue("Project", "Type", 1);
+        settings.SetLongValue("Project", "UnitCount", files.size());
+        for (int i=0; i<files.size(); ++i) {
+            const QByteArray section = QString("Unit%1").arg(i+1).toUtf8();
+            settings.SetValue(section, "FileName", files[i].toUtf8());
+            settings.SetValue(section, "FileEncoding", "UTF-8");
+        }
+        QVERIFY(settings.SaveFile(copy.toLocal8Bit()) >= 0);
+        ui.window->openProject(copy, false);
+        QVERIFY(ui.window->project());
+        auto parser = ui.window->project()->cppParser();
+        parser->setEnabled(true);
+        parser->addHardDefineByLine("#define HOST_SIM 1");
+        ui.window->project()->resetParserProjectFiles();
+        CppParser::parseFileListNonBlocking(parser, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!parser->parsing() && parser->findStatement("M_SPD_fout"), 30000);
+        const QString symbol = "M_SPD_fout";
+        int searched = 0;
+        for (const QString &path : files) {
+            auto editor = ui.window->editorManager()->newEditor(path, ENCODING_UTF8, getFileType(path), "", true, false);
+            QVERIFY(editor);
+            editor->setCppParser(parser);
+            int row = -1;
+            int column = -1;
+            QSynedit::CppSyntaxer syntaxer;
+            for (int i=0; i<editor->lineCount() && row<0; ++i) {
+                editor->startParseLine(&syntaxer, i);
+                while (!syntaxer.eol()) {
+                    if (syntaxer.getToken() == symbol
+                            && syntaxer.getTokenAttribute()->tokenType() == QSynedit::TokenType::Identifier) {
+                        row = i;
+                        column = syntaxer.getTokenPos();
+                        break;
+                    }
+                    syntaxer.next();
+                }
+            }
+            if (row < 0)
+                continue; // No occurrence outside comments/strings in this file.
+            const QSynedit::CharPos pos{column+2, row};
+            QVERIFY2(parser->findStatementOf(path, editor->getExpressionAtPosition(pos), row), qPrintable(path));
+            CppRefacter refactor(ui.window.get());
+            QVERIFY2(refactor.findOccurence(editor, pos), qPrintable(path));
+            const auto results = ui.window->searchResultModel()->currentResults();
+            QVERIFY(results);
+            qInfo() << "Reference probe" << path << "files:" << results->results().size();
+            QVERIFY2(!results->results().isEmpty(), qPrintable(path));
+            QVERIFY2(results->results().size() >= 3, qPrintable(path));
+            const QSynedit::CharPos end{column+symbol.size(), row};
+            editor->setCaretAndSelection(end, QSynedit::CharPos{end.ch-symbol.size(), row}, end);
+            QVERIFY(QMetaObject::invokeMethod(ui.window.get(), "on_actionFind_references_triggered", Qt::DirectConnection));
+            // The action must create a fresh result rather than leave the
+            // previous history entry on screen after silently failing.
+            QVERIFY2(ui.window->searchResultModel()->currentResults() != results, qPrintable(path));
+            QCOMPARE(ui.window->searchResultModel()->currentResults()->keyword(), symbol);
+            QCOMPARE(ui.window->searchResultModel()->currentResults()->results().size(), results->results().size());
+            ++searched;
+        }
+        QVERIFY(searched >= 3);
+    }
+    void symbolReferencesAtSelectionEnd_data() {
+        QTest::addColumn<QString>("symbol");
+        QTest::addColumn<int>("offset");
+        QTest::newRow("variable-inside") << "counter" << 2;
+        QTest::newRow("variable-selection-end") << "counter" << 7;
+        QTest::newRow("function-inside") << "tick" << 2;
+        QTest::newRow("function-selection-end") << "tick" << 4;
+    }
+    void symbolReferencesAtSelectionEnd() {
+        QFETCH(QString, symbol);
+        QFETCH(int, offset);
+        UiRegressionContext ui;
+        const QString filename = ui.directory.filePath("references.cpp");
+        const QByteArray source = "int counter;\nvoid tick() { ++counter; }\nvoid run() { tick(); counter=2; }\n";
+        QFile file(filename);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(source), qint64(source.size()));
+        file.close();
+        Editor editor(nullptr);
+        editor.setEditorSettings(&ui.settings.editor());
+        editor.setFilename(filename);
+        editor.setFileType(FileType::CppSource);
+        editor.setContent(QString::fromUtf8(source));
+        auto parser = std::make_shared<CppParser>();
+        editor.setCppParser(parser);
+        CppParser::parseFileBlocking(parser, filename, false, "", false, false);
+        const int start = editor.lineText(2).indexOf(symbol);
+        QVERIFY(start >= 0);
+        CppRefacter refactor(ui.window.get());
+        QVERIFY(refactor.findOccurence(&editor, QSynedit::CharPos{start+offset, 2}));
+        auto results = ui.window->searchResultModel()->currentResults();
+        QVERIFY(results);
+        QCOMPARE(results->keyword(), symbol);
+        QCOMPARE(results->results().size(), 1);
+        const int expected = symbol == "counter" ? 3 : 2;
+        QCOMPARE(results->results()[0]->results.size(), expected);
+    }
 #ifdef Q_OS_WIN
     void bundledToolsEnvironmentIsOptional() {
         QTemporaryDir directory;
@@ -385,6 +523,81 @@ private slots:
         QCOMPARE(client->mCmdQueue.head()->command, QString("-break-condition"));
         QCOMPARE(client->mCmdQueue.head()->params, QString("11 counter > 3"));
     }
+    void runToCursorUsesOneBasedLine() {
+        Debugger debugger;
+        auto *client = attach(debugger);
+        debugger.runTo("C:/control project/control.c", 42);
+        QCOMPARE(client->mCmdQueue.head()->command, QString("-exec-until"));
+        QCOMPARE(client->mCmdQueue.head()->params, QString("\"C:/control project/control.c:43\""));
+    }
+    void expressionsPreserveQuotedStrings() {
+        Debugger debugger;
+        auto *client = attach(debugger);
+        const QString expression = "sizeof(\"a b\") == 4";
+        const QString quoted = "\"sizeof(\\\"a b\\\") == 4\"";
+        client->evalExpression(expression);
+        QCOMPARE(client->mCmdQueue.dequeue()->params, quoted);
+        client->addWatch(expression);
+        QCOMPARE(client->mCmdQueue.dequeue()->params, quoted);
+        client->readMemory("&watch_value + 1", 1, 3);
+        QCOMPARE(client->mCmdQueue.dequeue()->params, QString("\"&watch_value + 1\" 3"));
+        auto breakpoint = std::make_shared<Breakpoint>();
+        breakpoint->number = 7;
+        breakpoint->line = 8;
+        breakpoint->filename = "control.c";
+        breakpoint->condition = expression;
+        client->addBreakpoint(breakpoint);
+        QVERIFY(client->mCmdQueue.dequeue()->params.contains("-c "+quoted));
+        client->setBreakpointCondition(breakpoint);
+        // GDB consumes -break-condition's remainder as a raw C expression.
+        QCOMPARE(client->mCmdQueue.dequeue()->params, "7 "+expression);
+    }
+    void memoryBlocksKeepTheirReportedAddresses_data() {
+        QTest::addColumn<QByteArray>("block");
+        QTest::addColumn<QStringList>("expected");
+        QTest::newRow("short-row")
+                << QByteArray("memory=[{begin=\"0x1000\",offset=\"0x0\",end=\"0x1003\",contents=\"010203\"}]")
+                << QStringList({"0x1000 0x01 0x02 0x03"});
+        QTest::newRow("nonzero-block-offset")
+                << QByteArray("memory=[{begin=\"0x1010\",offset=\"0x10\",end=\"0x1013\",contents=\"010203\"}]")
+                << QStringList({"0x1010 0x01 0x02 0x03"});
+        QTest::newRow("full-and-short-rows")
+                << QByteArray("memory=[{begin=\"0x1000\",offset=\"0x0\",end=\"0x1012\",contents=\"000102030405060708090a0b0c0d0e0f1011\"}]")
+                << QStringList({"0x1000 0x00 0x01 0x02 0x03 0x04 0x05 0x06 0x07 0x08 0x09 0x0a 0x0b 0x0c 0x0d 0x0e 0x0f", "0x1010 0x10 0x11"});
+    }
+    void memoryBlocksKeepTheirReportedAddresses() {
+        QFETCH(QByteArray, block);
+        QFETCH(QStringList, expected);
+        UiRegressionContext ui;
+        ui.settings.debugger().setMemoryViewColumns(16);
+        Debugger debugger;
+        auto *client = attach(debugger);
+        client->mCurrentCmd = std::make_shared<GDBMICommand>();
+        client->mCurrentCmd->command = "-data-read-memory-bytes";
+        QSignalSpy memory(client, &DebuggerClient::memoryUpdated);
+        client->processResult(block);
+        QCOMPARE(memory.count(), 1);
+        QCOMPARE(memory[0][0].toStringList(), expected);
+    }
+    void memoryWritesUseActualRowAndRejectOverflow() {
+        MemoryModel model(16);
+        model.updateMemory({"0x1000 0x01 0x02", "0x2000 0x03 0x04"});
+        QSignalSpy writes(&model, &MemoryModel::setMemoryData);
+        const auto index = model.index(1,1);
+        QVERIFY(!model.setData(index, "100", Qt::EditRole));
+        QVERIFY(writes.isEmpty());
+        QVERIFY(model.setData(index, "ff", Qt::EditRole));
+        QCOMPARE(writes.count(), 1);
+        QCOMPARE(writes[0][0].toULongLong(), qulonglong(0x2001));
+        QCOMPARE(writes[0][1].value<unsigned char>(), static_cast<unsigned char>(255));
+    }
+    void memoryWritesUseSparseRowAddress() {
+        MemoryModel model(16);
+        model.updateMemory({"0x1000 0x01 0x02", "0x2000 0x03 0x04"});
+        QSignalSpy writes(&model, &MemoryModel::setMemoryData);
+        QVERIFY(model.setData(model.index(1,1), "7f", Qt::EditRole));
+        QCOMPARE(writes[0][0].toULongLong(), qulonglong(0x2001));
+    }
     void runningBreakpointChangeWaitsForStop() {
         Debugger debugger;
         debugger.setIsForProject(true);
@@ -401,6 +614,17 @@ private slots:
         QCOMPARE(operation->command, QString("-break-insert"));
         QVERIFY(client->mCmdQueue.isEmpty());
         QVERIFY(!client->mBreakpointInterruptPending);
+    }
+    void runningWatchpointWaitsForStop() {
+        Debugger debugger;
+        debugger.setUseDebugServer(true);
+        auto *client = attach(debugger);
+        client->setRunning(true);
+        client->addWatchpoint("watch_value");
+        QCOMPARE(client->takeNextCommand()->command, QString("-exec-interrupt"));
+        QVERIFY(!client->takeNextCommand());
+        client->setRunning(false);
+        QCOMPARE(client->takeNextCommand()->command, QString("-break-watch"));
     }
     void internalPauseResumesOnlyAfterApplyingChanges() {
         Debugger debugger;

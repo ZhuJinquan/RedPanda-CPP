@@ -4,7 +4,7 @@
 
 ## 安装
 
-运行 `dist/RedPanda-3.5-beta2-r5-Setup.exe`。本次仅发布 Windows x64 安装 EXE。安装器及 IDE 均显示 `3.5 Beta 2`，不显示构建计数或修复版后缀。安装升级流程沿用原版：
+运行 `dist/RedPanda-3.5-beta2-r6-Setup.exe`。本次仅发布 Windows x64 安装 EXE。安装器及 IDE 均显示 `3.5 Beta 2`，不显示构建计数或修复版后缀。安装升级流程沿用原版：
 
 1. 根据安装范围和 32/64 位注册表记录自动找到旧安装目录。
 2. 安装前检查 IDE 是否占用程序文件；提示先保存工程并关闭 IDE，然后重试。不会强行终止 IDE。
@@ -41,6 +41,15 @@
 - 官方 CMake 4.3+ Windows 二进制要求 Windows 10 以上，因此该工具包在 Windows 10/11 部署并自动启用；较早系统保留原有 IDE/Makefile 及工具查找流程，不提高 IDE 原安装系统门槛。
 - Python、PLECS 等项目依赖仍沿用原配置。MinGW 中的 `mingw32-make.exe` 继续保留，供既有工程及 LTO 脚本使用。
 
+## r6 引用查找与调试修复
+
+- 查找符号引用时，光标位于名称末尾的 `=`、`;` 或 `(` 上，先定位到前一个标识符字符，避免选中名称后右键查找静默失败。保留原有符号解析、局部作用域和工程扫描流程。
+- “运行到光标”将编辑器从 0 开始的行号转换为 GDB 从 1 开始的行号，并正确传递含空格的源码路径。
+- 对新建条件断点、监视表达式、表达式求值和内存读取地址补全 MI 字符串转义。保留 `-break-condition` 使用原始 C 表达式的格式，避免把整个条件误当成恒真的字符串。
+- GDB Server 模式下运行中新增观察点复用现有“暂停、应用、恢复”流程；真实断点、异常和用户主动暂停的处理保持不变。
+- 内存字节块直接采用 GDB 报告的 `begin` 地址，修正短行地址偏移；编辑内存按该行真实地址写入，拒绝超出 `00–FF` 范围的输入。
+- 保留 r5 的工具版本、自动定位、`.dev/Makefile` 入口、升级安装和配置保留逻辑。本包未改动 PMSM 工程源码、编译脚本或配置。
+
 ## 构建与验证
 
 ```powershell
@@ -53,14 +62,14 @@
 
 验证记录：
 
-- `artifacts/debugwatch-beta35-tests.txt`：29/29 通过，无跳过。新增工具缺失回退、含空格/中文目录与移动后的定位、CMAKE_HOME 保留、不完整包不接管，以及通过生产构建进程执行 GNU Make → CMake → Ninja → 测试程序的真实集成验证。
-- `build-beta35-r5-regression.log`：定向回归及其余三组 CTest 全部通过；共享编辑器 363 项检查使用产品相同的 Windows 原生字体后端。
+- `artifacts/debugwatch-beta35-tests.txt`：43/43 通过，无跳过。覆盖新增引用定位和调试修复，以及原有断点、变量编辑、工具定位和 GNU Make → CMake → Ninja 编译集成验证。本轮通过 `REDPANDA_REFERENCE_PROJECT` 读取 PMSM 调试工程，在独立临时工程配置下验证 `M_SPD_fout` 的引用扫描及选中名称后调用查找动作；结果覆盖 8 个工程文件，原源码只读。
+- `build-beta35-r6-regression.log`：定向回归及其余三组 CTest 全部通过；共享编辑器使用产品相同的 Windows 原生字体后端。
 - `artifacts/gdb-server-startup-migration.json`：实际启动新版 IDE，将独立旧配置中的 `false` 迁移为 `true` 并落盘，保留自定义端口 `41239`。主窗口标题为“小熊猫C++ 3.5 Beta 2”。
-- `artifacts/live-gdb-beta35-smoke.log`：真实独立 GDB/MI 会话通过赋值读回、非法值、条件断点、删除、运行中暂停后新增并命中断点、正常退出。
-- `artifacts/upgrade-tests-r5b/verification.json`：隔离注册表与测试载荷覆盖旧版升级、重复安装、八类文件关联，以及工具包和许可文件安装/卸载、用户自定义 tools 子目录保留。
-- `artifacts/upgrade-tests-r5b/uninstall-failure.json`：旧卸载器失败时，在覆盖程序文件前中止。
-- `artifacts/installer-r5-integrity.txt` 与 `artifacts/installer-r5-payload-verification.json`：最终安装包完整性及完整工具目录文件校验。
-- `tests/verify_bundled_tools.py`：针对最终解包后的工具运行版本、x64 架构、模块/许可文件、CMake+Ninja 配置/编译/运行检查。验证目录含空格和中文，记录于 `artifacts/bundled-tools-r5-native-smoke/verification.json`。
+- `artifacts/live-gdb-r6-smoke.log`：使用最终安装包内的 GDB/GDB Server，在独立目标上验证赋值读回、非法值、带引号表达式/条件、运行到光标、单步/跳出、短内存读取、运行中暂停后新增并命中观察点/断点、正常退出。
+- `artifacts/upgrade-tests-r6/verification.json`：隔离注册表与测试载荷覆盖旧版升级、重复安装、八类文件关联，以及工具包和许可文件安装/卸载、用户自定义 tools 子目录保留。
+- `artifacts/upgrade-tests-r6/uninstall-failure.json`：旧卸载器失败时，在覆盖程序文件前中止。
+- `artifacts/installer-r6-integrity.txt` 与 `artifacts/installer-r6-payload-verification.json`：最终安装包完整性及载荷文件校验；CMake/Ninja、MinGW、模板与 r5 解包文件一致，未带入测试配置或 32 位工具链。
+- `tests/verify_bundled_tools.py`：针对最终解包后的工具运行版本、x64 架构、模块/许可文件、CMake+Ninja 配置/编译/运行检查。验证目录含空格和中文，记录于 `artifacts/bundled-tools-r6-native-smoke/verification.json`。
 - `artifacts/pmsm-server-running-breakpoint.log`：已有 PMSM Windows SIL EXE 在独立 GDB Server 会话中，运行后暂停、插入 `AD_IO_DA.c:164`、恢复并成功命中。未改动该仿真工程。
 
-升级回归使用测试载荷和专用产品标识，没有覆盖本机正在使用的正式安装。新版 IDE 已独立启动并打开测试源码；这不等同于全部 IDE 功能或用户工程的完整回归。安装提示的截图检查因界面授权超时未完成。
+升级回归使用测试载荷和专用产品标识，没有覆盖本机正在使用的正式安装。上述测试不等同于全部 IDE 功能或所有用户工程的完整回归。

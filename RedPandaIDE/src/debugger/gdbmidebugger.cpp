@@ -23,6 +23,19 @@
 
 #include <QFileInfo>
 
+static QString miQuote(const QString &text)
+{
+    QString result = "\"";
+    for (const QChar ch : text) {
+        if (ch == '\\' || ch == '"')
+            result += '\\' + QString(ch);
+        else if (ch.unicode() < 32)
+            result += QString("\\%1").arg(ch.unicode(), 3, 8, QChar('0'));
+        else
+            result += ch;
+    }
+    return result + '"';
+}
 
 const QRegularExpression GDBMIDebuggerClient::REGdbSourceLine("^(\\d)+\\s+in\\s+(.+)$");
 
@@ -256,7 +269,8 @@ PGDBMICommand GDBMIDebuggerClient::takeNextCommand()
     }
     const QString &command = mCmdQueue.head()->command;
     const bool changesBreakpoint = command == "-break-insert"
-            || command == "-break-delete" || command == "-break-condition";
+            || command == "-break-delete" || command == "-break-condition"
+            || command == "-break-watch";
     if (mInferiorRunning && debugger()->useDebugServer()
             && clientType() == DebuggerType::GDB && changesBreakpoint) {
         // GDB rejects breakpoint mutations while this remote target is running.
@@ -465,10 +479,8 @@ void GDBMIDebuggerClient::handleMemoryBytes(const QList<GDBMIResultParser::Parse
     foreach (const GDBMIResultParser::ParseValue& row, rows) {
         GDBMIResultParser::ParseObject rowObject = row.object();
         bool ok;
-        qulonglong startAddr = rowObject["begin"].value().toLongLong(&ok, 16);
-        qulonglong endAddr = rowObject["end"].value().toLongLong(&ok, 16);
-        qulonglong offset = rowObject["offset"].value().toLongLong(&ok, 16);
-        startAddr += offset;
+        qulonglong startAddr = rowObject["begin"].value().toULongLong(&ok, 16);
+        qulonglong endAddr = rowObject["end"].value().toULongLong(&ok, 16);
         QByteArray contents = rowObject["contents"].value();
         qulonglong addr = startAddr;
         QStringList values;
@@ -485,7 +497,7 @@ void GDBMIDebuggerClient::handleMemoryBytes(const QList<GDBMIResultParser::Parse
         }
         if (!values.isEmpty()) {
             memory.append(QString("%1 %2").arg(
-                              QString("0x%1").arg(addr - values.length() + 1 ,0,16),
+                              QString("0x%1").arg(addr - values.length() ,0,16),
                               values.join(" ")));
             values.clear();
         }
@@ -1108,9 +1120,9 @@ void GDBMIDebuggerClient::stepOut()
 
 void GDBMIDebuggerClient::runTo(const QString &filename, int line)
 {
-    postCommand("-exec-until", QString("\"%1\":%2")
-                           .arg(filename)
-                           .arg(line));
+    QString source = filename;
+    source.replace('\\', '/');
+    postCommand("-exec-until", miQuote(QString("%1:%2").arg(source).arg(line+1)));
 }
 
 void GDBMIDebuggerClient::resume()
@@ -1145,7 +1157,7 @@ void GDBMIDebuggerClient::readMemory(const QString& startAddress, int rows, int 
     //             .arg(rows)
     //             .arg(cols));
     postCommand("-data-read-memory-bytes",QString("%1 %2")
-                .arg(startAddress)
+                .arg(miQuote(startAddress))
                 .arg(rows * cols));
 }
 
@@ -1160,19 +1172,17 @@ void GDBMIDebuggerClient::addBreakpoint(PBreakpoint breakpoint)
         // break "filename":linenum
         QString condition;
         if (!breakpoint->condition.isEmpty()) {
-            condition = QString(" -c \"%1\"").arg(breakpoint->condition);
+            condition = " -c " + miQuote(breakpoint->condition);
         }
         QString filename = breakpoint->filename;
         filename.replace('\\','/');
         if (clientType()==DebuggerType::LLDB_MI) {
             postCommand("-break-insert",
-                        QString("%1 \"%2:%3\"")
-                        .arg(condition, filename)
-                        .arg(breakpoint->line+1));
+                        condition + " " + miQuote(QString("%1:%2").arg(filename).arg(breakpoint->line+1)));
         } else {
             postCommand("-break-insert",
-                        QString("%1 --source \"%2\" --line %3")
-                        .arg(condition,filename)
+                        QString("%1 --source %2 --line %3")
+                        .arg(condition,miQuote(filename))
                         .arg(breakpoint->line+1));
         }
     }
@@ -1204,7 +1214,7 @@ void GDBMIDebuggerClient::setBreakpointCondition(PBreakpoint breakpoint)
 
 void GDBMIDebuggerClient::addWatch(const QString &expression)
 {
-    postCommand("-var-create", QString("\"%1\"").arg(expression));
+    postCommand("-var-create", miQuote(expression));
 }
 
 void GDBMIDebuggerClient::removeWatch(PWatchVar watchVar)
@@ -1225,7 +1235,7 @@ void GDBMIDebuggerClient::writeWatchVar(const QString &varName, const QString &v
 void GDBMIDebuggerClient::addWatchpoint(const QString &watchExp)
 {
     if (!watchExp.isEmpty())
-        postCommand("-break-watch", watchExp);
+        postCommand("-break-watch", miQuote(watchExp));
 }
 
 void GDBMIDebuggerClient::refreshWatch(PWatchVar var)
@@ -1247,14 +1257,7 @@ void GDBMIDebuggerClient::fetchWatchVarChildren(const QString& varName)
 
 void GDBMIDebuggerClient::evalExpression(const QString &expression)
 {
-    QString escaped;
-    foreach(const QChar& ch, expression) {
-        if (ch.unicode()<32) {
-            escaped+=QString("\\%1").arg(int(ch.unicode()),0,8);
-        } else
-            escaped+=ch;
-    }
-    postCommand("-data-evaluate-expression", QString("\"%1\"").arg(escaped));
+    postCommand("-data-evaluate-expression", miQuote(expression));
 }
 
 void GDBMIDebuggerClient::selectFrame(PTrace trace)

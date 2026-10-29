@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$QtDir = (Join-Path $PSScriptRoot '.tools/Qt/5.15.2/msvc2019_64'),
-    [string]$PackageName = 'RedPanda-3.5-beta2-r5',
+    [string]$PackageName = 'RedPanda-3.5-beta2-r6',
     [switch]$RunTests,
     [switch]$Installer,
     [switch]$PackageOnly,

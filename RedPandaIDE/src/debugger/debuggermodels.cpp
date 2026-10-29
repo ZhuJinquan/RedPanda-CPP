@@ -1337,10 +1337,10 @@ bool MemoryModel::setData(const QModelIndex &index, const QVariant &value, int r
         return false;
     if (role == Qt::EditRole && mStartAddress>0) {
         bool ok;
-        unsigned char val = ("0x"+value.toString()).toUInt(&ok,16);
-        if (!ok)
+        unsigned int val = ("0x"+value.toString()).toUInt(&ok,16);
+        if (!ok || val > 0xff)
             return false;
-        emit setMemoryData(mStartAddress+mDataPerLine*index.row()+col,val);
+        emit setMemoryData(line->startAddress+col,static_cast<unsigned char>(val));
         return true;
     }
     return false;

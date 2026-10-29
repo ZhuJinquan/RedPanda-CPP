@@ -78,13 +78,45 @@ try:
     command('-var-create watch @ watch_value')
     assert 'value="1234"' in command('-var-assign watch "1234"')
     assert 'value="1234"' in command('-data-evaluate-expression watch_value')
+    # A string literal must survive MI argument parsing intact.
+    quoted_expression = '"sizeof(\\"a b\\")"'
+    assert 'value="4"' in command('-data-evaluate-expression ' + quoted_expression)
+    assert 'value="4"' in command('-var-create quoted @ ' + quoted_expression)
+    command('-var-delete quoted')
+    conditional = command(f'-break-insert -c "sizeof(\\"a b\\") == 4" --source "{source}" --line 10')
+    conditional_number = re.search(r'number="(\d+)"', conditional).group(1)
+    command('-break-delete ' + conditional_number)
     command('-var-assign watch "not_a_valid_symbol"', error=True)
     assert 'value="1234"' in command('-data-evaluate-expression watch_value')
-    command(f'-break-condition {number} ticks >= 3')
+    command(f'-break-condition {number} sizeof("a b") == 4 && ticks >= 3')
     resume()
     assert 'line="9"' in stop()
     assert 'value="3"' in command('-data-evaluate-expression ticks')
+    # The IDE's zero-based caret line 9 must request actual source line 10.
+    stops.clear()
+    command(f'-exec-until "{source}:10"')
+    assert 'line="10"' in stop()
+    stops.clear()
+    command('-exec-finish')
+    assert 'function-finished' in stop()
+    resume()
+    assert 'line="9"' in stop()
+    stops.clear()
+    command('-exec-step')
+    assert 'line="10"' in stop()
+    memory = command('-data-read-memory-bytes "&watch_value + 0" 3')
+    assert re.search(r'contents="[0-9a-fA-F]{6}"', memory), memory
+    # Create a data breakpoint while the target is running, using the same
+    # interrupt/apply/resume sequence as the production scheduler.
     command(f'-break-delete {number}')
+    resume()
+    command('-exec-interrupt')
+    stop()
+    watchpoint = command('-break-watch "ticks"')
+    watchpoint_number = re.search(r'number="(\d+)"', watchpoint).group(1)
+    resume()
+    assert 'watchpoint-trigger' in stop()
+    command('-break-delete ' + watchpoint_number)
     resume()
     # The IDE scheduler pauses a running remote target before mutating breakpoints.
     command('-exec-interrupt')
@@ -101,7 +133,7 @@ try:
     resume()
     assert 'exited' in stop()
     command('-gdb-exit')
-    print('PASS: real GDB/MI assignment and invalid-value readback, breakpoint condition/delete, pause/apply/hit while running, and interrupt')
+    print('PASS: real GDB/MI assignment/readback, quoted expressions/conditions, run-to-cursor, step/finish, short memory read, running watchpoint/breakpoint edits, interrupt and normal exit')
 finally:
     if gdb.poll() is None:
         try:
